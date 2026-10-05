@@ -10,6 +10,8 @@ Skyrim SE / AE 的独立 SKSE 衣柜管理器。扫描已加载的 ARMO 资源�
 
 ```text
 wardrobe
+wa
+sa
 sw
 wardrobe reload
 wardrobe preset "city-black"
