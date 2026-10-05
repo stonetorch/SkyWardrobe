@@ -38,6 +38,13 @@ namespace Wardrobe
         std::string quickGroup, editingGroup, groupName, groupAlias, groupNote, groupSearch;
         int quickPart = 0;
         bool openGroupEditor = false;
+        std::string referenceSearch, quickTargetSearch;
+        QuickAction pendingQuickAction = QuickAction::None;
+
+        bool MatchesGroupSearch(const std::string& id, const Json& metadata, const std::string& query)
+        {
+            return query.empty() || SearchScore(query, id) > 0 || SearchMetadata(query, metadata) > 0;
+        }
 
         std::string CurrentGroup()
         {
@@ -199,7 +206,7 @@ namespace Wardrobe
             const bool favorite = metadata.value("favorite", false);
             const bool selected = quickAction == QuickAction::Add ? service.InGroup(entry, quickGroup)
                 : quickAction == QuickAction::Part ? entry.part == quickPart
-                : quickAction == QuickAction::Remove ? service.InGroup(entry, CurrentGroup()) : service.InWorking(entry.key);
+                : quickAction == QuickAction::Remove ? service.InGroup(entry, quickGroup) : service.InWorking(entry.key);
             const auto title = std::string(favorite ? "★ " : "") + service.Name(entry);
             const auto note = metadata.value("note", "");
             ImGui::PushID(entry.key.c_str());
@@ -227,7 +234,7 @@ namespace Wardrobe
             {
                 // 快捷状态消费点击，不改变活动工作搭配，也不触发双击应用。
                 if (quickAction == QuickAction::Add) service.SetGroupItem(quickGroup, entry, !selected);
-                else if (quickAction == QuickAction::Remove) service.SetGroupItem(CurrentGroup(), entry, false);
+                else if (quickAction == QuickAction::Remove) service.SetGroupItem(quickGroup, entry, false);
                 else
                 {
                     auto& item = service.store.database["items"][entry.key];
@@ -297,13 +304,18 @@ namespace Wardrobe
             groupAlias = metadata->value("alias", "");
             groupNote = metadata->value("note", "");
             groupSearch = Join(metadata->value("search", Json::array()));
+            referenceSearch.clear();
             openGroupEditor = true;
         }
 
         void DrawGroupEditor()
         {
             if (openGroupEditor) { ImGui::OpenPopup(Tr("Group metadata", "服装组信息")); openGroupEditor = false; }
-            if (!ImGui::BeginPopupModal(Tr("Group metadata", "服装组信息"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+            const auto* viewport = ImGui::GetMainViewport();
+            const float scale = ImGui::GetFontSize() / 18.0f;
+            ImGui::SetNextWindowSize(ImVec2(std::min(900.0f * scale, viewport->WorkSize.x * 0.9f),
+                std::min(620.0f * scale, viewport->WorkSize.y * 0.85f)), ImGuiCond_Appearing);
+            if (!ImGui::BeginPopupModal(Tr("Group metadata", "服装组信息"), nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
             auto& service = Service::Get();
             const auto [collection, id] = SplitGroupID(editingGroup);
             EditText(Tr("Name", "名称"), groupName);
@@ -321,25 +333,46 @@ namespace Wardrobe
             if (collection == "pluginCategories")
             {
                 if (ImGui::Button(Tr("Use plugin name", "直接显示模组名"))) { groupName = id; groupAlias.clear(); }
+                ImGui::SameLine();
                 if (ImGui::Button(Tr("Regenerate alias template", "重新生成别名包模板"))) service.GenerateAliasTemplate(id, true);
+                ImGui::SameLine();
                 if (ImGui::Button(Tr("Unregister", "取消注册")))
                 { service.store.database[collection][id]["enabled"] = false; service.Save(); ImGui::CloseCurrentPopup(); }
             }
             ImGui::SeparatorText(Tr("References", "引用服装组"));
-            // 遍历快照，编辑引用不会使当前迭代器失效。
-            for (const char* field : {"categories", "pluginCategories", "groups"})
-                for (const auto& [otherID, metadata] : service.store.database[field].items())
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint("##reference search", Tr("Search groups / pinyin...", "搜索服装组 / 拼音…"), &referenceSearch);
+            // 每帧冻结两栏成员，点击后下一帧移动，避免同一次点击在另一栏再次处理。
+            const auto refs = service.Group(editingGroup) ? service.Group(editingGroup)->value("references", std::vector<std::string>{}) : std::vector<std::string>{};
+            if (ImGui::BeginTable("Group references", 2, ImGuiTableFlags_SizingStretchSame))
+            {
+                for (int column = 0; column < 2; ++column)
                 {
-                    const auto target = std::string(field) + ":" + otherID;
-                    if (target == editingGroup) continue;
-                    auto refs = service.store.database[collection][id].value("references", std::vector<std::string>{});
-                    bool checked = std::find(refs.begin(), refs.end(), target) != refs.end();
-                    if (ImGui::Checkbox((ObjectName(otherID, metadata) + "##" + target).c_str(), &checked))
-                    {
-                        std::erase(refs, target); if (checked) refs.push_back(target);
-                        service.store.database[collection][id]["references"] = refs; service.Save();
-                    }
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(column == 0 ? Tr("Available — click to reference", "未引用 · 点击添加") : Tr("Referenced — click to remove", "已引用 · 点击移除"));
+                    ImGui::PushID(column);
+                    ImGui::BeginChild("Reference list", ImVec2(0, std::max(80.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing())), ImGuiChildFlags_Borders);
+                    for (const char* field : {"categories", "pluginCategories", "groups"})
+                        for (const auto& [otherID, metadata] : service.store.database[field].items())
+                        {
+                            const auto target = std::string(field) + ":" + otherID;
+                            const bool referenced = std::find(refs.begin(), refs.end(), target) != refs.end();
+                            if (target == editingGroup || referenced != (column == 1) || !MatchesGroupSearch(otherID, metadata, referenceSearch)) continue;
+                            if (ImGui::Selectable((ObjectName(otherID, metadata) + "##" + target).c_str()))
+                            {
+                                auto updated = service.store.database[collection][id].value("references", std::vector<std::string>{});
+                                std::erase(updated, target);
+                                if (!referenced) updated.push_back(target);
+                                service.store.database[collection][id]["references"] = updated;
+                                service.Save();
+                            }
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", target.c_str());
+                        }
+                    ImGui::EndChild();
+                    ImGui::PopID();
                 }
+                ImGui::EndTable();
+            }
             ImGui::EndDisabled();
             if (ImGui::Button(Tr("Close", "关闭"))) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
@@ -353,40 +386,80 @@ namespace Wardrobe
             {
                 if (ImGui::Button(Tr("Edit group metadata", "编辑服装组信息"))) StartGroupEdit(current);
                 ImGui::SameLine(); if (ImGui::Button(Tr("Use outfit group", "使用服装组"))) service.UseGroup(current);
+                ImGui::SameLine();
                 ImGui::BeginDisabled(!service.store.writable);
                 if (ImGui::Button(Tr("Create subgroup", "创建子服装组")))
                 {
                     quickGroup = service.CreateSubgroup(current);
                     if (!quickGroup.empty()) quickAction = QuickAction::Add;
                 }
+                ImGui::EndDisabled();
                 ImGui::SameLine();
-                ImGui::BeginDisabled(view == View::Plugin);
-                if (ImGui::Button(Tr("Remove items", "快捷移除服装"))) quickAction = QuickAction::Remove;
-                ImGui::EndDisabled(); ImGui::EndDisabled();
             }
             ImGui::BeginDisabled(!service.store.writable);
-            if (ImGui::BeginCombo(Tr("Add to group", "快捷添加到服装组"), quickGroup.c_str()))
+            bool selectTarget = false;
+            if (ImGui::Button(Tr("Quick actions", "快捷操作"))) ImGui::OpenPopup("Quick action menu");
+            if (ImGui::BeginPopup("Quick action menu"))
             {
-                for (const char* collection : {"categories", "groups"})
-                    for (const auto& [id, metadata] : service.store.database[collection].items())
-                        if (ImGui::Selectable((ObjectName(id, metadata) + "##" + collection + id).c_str()))
-                        { quickGroup = std::string(collection) + ":" + id; quickAction = QuickAction::Add; }
-                ImGui::EndCombo();
+                if (ImGui::MenuItem(Tr("Add to group", "添加到服装组"))) { pendingQuickAction = QuickAction::Add; selectTarget = true; }
+                if (ImGui::MenuItem(Tr("Remove from group", "从服装组移除"))) { pendingQuickAction = QuickAction::Remove; selectTarget = true; }
+                if (ImGui::MenuItem(Tr("Mark part", "标记部件分类"))) { pendingQuickAction = QuickAction::Part; selectTarget = true; }
+                ImGui::EndPopup();
             }
-            if (ImGui::BeginCombo(Tr("Mark part", "快捷标记部件"), PartName(quickPart).c_str()))
+            // 先选操作，再确认目标；取消选择器不会改变正在进行的快捷操作。
+            if (selectTarget) { quickTargetSearch.clear(); ImGui::OpenPopup(Tr("Quick action target", "选择快捷操作目标")); }
+            const auto* viewport = ImGui::GetMainViewport();
+            const float scale = ImGui::GetFontSize() / 18.0f;
+            ImGui::SetNextWindowSize(ImVec2(std::min(560.0f * scale, viewport->WorkSize.x * 0.9f),
+                std::min(420.0f * scale, viewport->WorkSize.y * 0.8f)), ImGuiCond_Appearing);
+            if (ImGui::BeginPopupModal(Tr("Quick action target", "选择快捷操作目标"), nullptr, ImGuiWindowFlags_NoSavedSettings))
             {
-                for (int i = 0; i < static_cast<int>(std::size(PartIDs)); ++i)
-                    if (ImGui::Selectable(PartName(i).c_str(), quickPart == i)) { quickPart = i; quickAction = QuickAction::Part; }
-                ImGui::EndCombo();
+                ImGui::TextUnformatted(pendingQuickAction == QuickAction::Part ? Tr("Select a part", "选择部件分类")
+                    : pendingQuickAction == QuickAction::Add ? Tr("Select a group to add to", "选择要添加到的服装组") : Tr("Select a group to remove from", "选择要移除服装的服装组"));
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::InputTextWithHint("##quick target search", Tr("Search / pinyin...", "搜索 / 拼音…"), &quickTargetSearch);
+                ImGui::BeginChild("Quick targets", ImVec2(0, std::max(60.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing())), ImGuiChildFlags_Borders);
+                if (pendingQuickAction == QuickAction::Part)
+                {
+                    for (int i = 0; i < static_cast<int>(std::size(PartIDs)); ++i)
+                        if ((quickTargetSearch.empty() || SearchScore(quickTargetSearch, PartName(i)) > 0)
+                            && ImGui::Selectable((PartName(i) + "##" + PartIDs[i]).c_str(), quickAction == QuickAction::Part && quickPart == i))
+                        {
+                            quickPart = i; quickAction = pendingQuickAction; ImGui::CloseCurrentPopup();
+                        }
+                }
+                else
+                {
+                    for (const char* collection : {"categories", "groups"})
+                        for (const auto& [id, metadata] : service.store.database[collection].items())
+                        {
+                            const auto target = std::string(collection) + ":" + id;
+                            if (!MatchesGroupSearch(id, metadata, quickTargetSearch)) continue;
+                            if (ImGui::Selectable((ObjectName(id, metadata) + "##" + target).c_str(), quickAction == pendingQuickAction && quickGroup == target))
+                            {
+                                quickGroup = target; quickAction = pendingQuickAction; ImGui::CloseCurrentPopup();
+                            }
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", target.c_str());
+                        }
+                }
+                ImGui::EndChild();
+                if (ImGui::Button(Tr("Cancel", "取消"))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
             }
             ImGui::EndDisabled();
+            if (quickAction != QuickAction::None && quickAction != QuickAction::Part && !service.Group(quickGroup)) quickAction = QuickAction::None;
             if (quickAction != QuickAction::None)
             {
-                if (quickAction == QuickAction::Remove && (view == View::Plugin || !service.Group(current))) quickAction = QuickAction::None;
-                ImGui::TextColored(ImVec4(1, 0.65f, 0.15f, 1), "%s: %s", quickAction == QuickAction::Add ? Tr("Adding to group", "正在快捷添加服装")
-                    : quickAction == QuickAction::Part ? Tr("Marking part", "正在快捷标记部件") : Tr("Removing from group", "正在快捷移除服装"),
-                    quickAction == QuickAction::Add ? quickGroup.c_str() : quickAction == QuickAction::Part ? PartName(quickPart).c_str() : current.c_str());
+                ImGui::SameLine();
                 if (ImGui::Button(Tr("Finish quick action", "结束快捷操作"))) quickAction = QuickAction::None;
+                if (quickAction != QuickAction::None)
+                {
+                    const auto* target = service.Group(quickGroup);
+                    const auto targetName = quickAction == QuickAction::Part ? PartName(quickPart)
+                        : target ? ObjectName(SplitGroupID(quickGroup).second, *target) : quickGroup;
+                    ImGui::TextColored(ImVec4(1, 0.65f, 0.15f, 1), "%s: %s", quickAction == QuickAction::Add ? Tr("Adding to group", "正在快捷添加服装")
+                        : quickAction == QuickAction::Part ? Tr("Marking part", "正在快捷标记部件") : Tr("Removing from group", "正在快捷移除服装"), targetName.c_str());
+                }
             }
         }
 
