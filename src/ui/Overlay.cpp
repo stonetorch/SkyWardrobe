@@ -85,6 +85,7 @@ namespace
         bool down;
         std::int32_t deltaX = 0;
         std::int32_t deltaY = 0;
+        bool initialPress = false;
     };
     std::mutex inputMutex;
     std::vector<InputRecord> inputRecords;
@@ -152,7 +153,7 @@ namespace
                         else if (event->GetDevice() == RE::INPUT_DEVICE::kKeyboard)
                         {
                             const auto virtualKey = ScanCodeToVirtualKey(code);
-                            if (virtualKey && !menuInput) inputRecords.push_back({ InputRecord::Kind::kKey, virtualKey, down });
+                            if (virtualKey && !menuInput) inputRecords.push_back({ InputRecord::Kind::kKey, virtualKey, down, 0, 0, button->IsDown() });
                         }
                     }
                     else if (auto* character = event->AsCharEvent())
@@ -216,6 +217,12 @@ namespace
                 if (waitingForKey && record.down)
                 {
                     CaptureKey(record.code);
+                }
+                else if (record.code == VK_ESCAPE && record.initialPress && Overlay::InputMethod::UsesGameInputMethod() &&
+                    !Overlay::InputMethod::WantsTextInput())
+                {
+                    // IMU 放行的 Esc 才能关闭菜单，组词取消键不会绕过它的过滤。
+                    Overlay::CloseAllMenus();
                 }
                 else if (const auto key = VirtualKeyToImGuiKey(record.code); key != ImGuiKey_None)
                 {
@@ -345,6 +352,8 @@ namespace
             leftCtrl = false; rightCtrl = false;
             if (ImGui::GetCurrentContext())
             {
+                // 隐藏面板同时结束编辑，重新打开时不能自动恢复上次的输入法焦点。
+                ImGui::ClearActiveID();
                 ImGui::GetIO().ClearInputKeys();
                 ImGui::GetIO().ClearInputMouse();
             }
@@ -366,9 +375,9 @@ namespace
             Overlay::InputMethod::SetOverlayState(inputOverlayVisible.load(), false);
         if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
         {
-            // 外部输入法通过菜单链处理 Esc/组词；不能先在原始 Win32 按键处关闭衣柜。
-            const bool menuInput = Overlay::InputMethod::UsesMenuInput();
-            if (visible && !waitingForKey && !menuInput && wParam == VK_ESCAPE) { Overlay::CloseAllMenus(); return 0; }
+            // 等待菜单型输入法或 IMU 过滤后放行的 Esc，原始窗口按键不能抢先关闭衣柜。
+            const bool externalInput = Overlay::InputMethod::UsesMenuInput() || Overlay::InputMethod::UsesGameInputMethod();
+            if (visible && !waitingForKey && !externalInput && wParam == VK_ESCAPE) { Overlay::CloseAllMenus(); return 0; }
             if (waitingForKey)
             {
                 if ((lParam & (1LL << 30)) == 0)

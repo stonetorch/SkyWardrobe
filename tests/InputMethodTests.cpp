@@ -28,6 +28,13 @@ int main()
         }
         Require(AcceptsSource(Provider::kInputMethodUnlocked, CharacterSource::kGame), "IMU uses game Unicode code points");
         Require(!AcceptsSource(Provider::kInputMethodUnlocked, CharacterSource::kScaleform), "Ignore the same game chars translated by MenuControls");
+        Require(!NeedsMenuBridge(Provider::kInputMethodUnlocked), "IMU filtered keys stay on the game input path");
+        Require(NeedsMenuBridge(Provider::kSimpleIME) && NeedsMenuBridge(Provider::kSkyrimInputMethod), "Scaleform IMEs require the bridge");
+        Require(CanAcquireTextInput(Provider::kInputMethodUnlocked, true, true, true, false), "IMU editing does not wait for a blank menu");
+        Require(!CanAcquireTextInput(Provider::kSimpleIME, true, true, true, false), "Menu provider waits for its receiver");
+        Require(!CanAcquireTextInput(Provider::kInputMethodUnlocked, true, true, false, false), "Visible overlay alone cannot enable IMU");
+        Require(!CanAcquireTextInput(Provider::kInputMethodUnlocked, false, true, true, false), "Closing overlay releases IMU");
+        Require(!CanAcquireTextInput(Provider::kInputMethodUnlocked, true, false, true, false), "Application focus loss releases IMU");
         Require(UsesProviderPaste(Provider::kSimpleIME) && UsesProviderPaste(Provider::kSkyrimInputMethod), "Menu IMEs own Unicode paste");
         Require(!UsesProviderPaste(Provider::kInputMethodUnlocked), "IMU keeps ImGui clipboard shortcut");
         Require(IsPasteFallback(Provider::kSimpleIME, 'v', true), "SimpleIME disabled paste falls back from Ctrl+V character");
@@ -37,6 +44,7 @@ int main()
 
         TextSession session;
         Require(!session.Accepts(session.Generation()), "Unfocused editor rejects text");
+        Require(!session.SetFocus(true, 0) && !session.Active(), "A stale IME visibility flag without an active editor must not enable input");
         Require(session.SetFocus(true, 101), "Enter text input");
         const auto first = session.Generation();
         Require(session.Accepts(first), "Current editor accepts its queued text");
@@ -47,6 +55,8 @@ int main()
         Require(!session.Accepts(second) && session.ID() == 0, "Close or focus loss releases editor identity");
         session.SetFocus(true, 202);
         Require(!session.Accepts(second), "Reopening the same editor cannot revive stale commits");
+        const auto reopened = session.Generation();
+        Require(session.SetFocus(true, 0) && !session.Active() && !session.Accepts(reopened), "Losing the active ID releases an existing editor even when the IME flag is stale");
 
         Utf16Decoder decoder;
         Require(decoder.Push(0x88D9) == std::vector<std::uint32_t>{0x88D9}, "Chinese BMP character");

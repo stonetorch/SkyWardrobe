@@ -37,11 +37,13 @@ wardrobe close
 
 ## 外部输入法
 
-自动接入 **SimpleIME**、**Skyrim Input Method - Use System's IME**、**Input Method Unlocked**，无需为衣柜安装额外桥接 DLL。三种接入均已编译实现，游戏内兼容性仍需逐一验收。只启用其中一个输入法模组；同时加载多个时衣柜不申请外部输入法焦点，设置页显示冲突提示。
+自动接入 **SimpleIME**、**Skyrim Input Method - Use System's IME**、**Input Method Unlocked**，无需为衣柜安装额外桥接 DLL。三种接入均已编译实现；IMU 在 Skyrim 1.5.97 / IMU 2.1.0 环境修正后得到用户成功反馈，另外两种仍需分别游戏验收。只启用其中一个输入法模组；同时加载多个时衣柜不申请外部输入法焦点，设置页显示冲突提示。
 
 SimpleIME 的候选窗位置请设为 **Follow Cursor** 或 **None**，其 GFx 光标定位无法直接跟随独立 ImGui 插入点。Input Method Unlocked 的运行限制依其安装版本而定，窗口 / 无边框模式及 IMM 兼容输入法是作者公布的支持范围。没有外部输入法模组时可继续使用 Ctrl+V；本插件不提供独立 IMM / TSF 后备。
 
 界面设置显示识别到的输入法。搜索、别名、备注等标准文本框共用接入；焦点退出、关闭衣柜、切出游戏或读档会清理本模组申请和待处理文字。实现与来源见 [输入法接入说明](docs/InputMethodIntegration.md)，游戏验收见 [RuntimeChecks](docs/RuntimeChecks.md)。
+
+信息搜集、初版失败分析、最终关键代码及完整输入流程见 [ImGui 中文输入兼容完整报告](docs/reports/imgui-chinese-input-retrospective.md)。
 
 ## JSON 与字体配置
 

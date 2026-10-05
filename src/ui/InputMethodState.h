@@ -24,6 +24,17 @@ namespace Overlay::InputMethod
         return provider != Provider::kNone && provider != Provider::kConflict;
     }
 
+    constexpr bool NeedsMenuBridge(Provider provider)
+    {
+        // IMU 已在游戏事件入队前过滤组词按键，不需要再经过 Scaleform 菜单。
+        return provider == Provider::kSimpleIME || provider == Provider::kSkyrimInputMethod;
+    }
+
+    constexpr bool CanAcquireTextInput(Provider provider, bool visible, bool focused, bool editing, bool menuOpen)
+    {
+        return IsExternal(provider) && visible && focused && editing && (!NeedsMenuBridge(provider) || menuOpen);
+    }
+
     constexpr bool AcceptsSource(Provider provider, CharacterSource source)
     {
         // 按来源选择唯一文字通道；不能按字符值去重，否则连续相同汉字会被吞掉。
@@ -49,6 +60,7 @@ namespace Overlay::InputMethod
     public:
         bool SetFocus(bool active, std::uint32_t id)
         {
+            active = active && id != 0;
             id = active ? id : 0;
             if (active_ == active && id_ == id) return false;
             active_ = active;

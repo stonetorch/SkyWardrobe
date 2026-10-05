@@ -44,6 +44,7 @@ namespace Overlay::InputMethod
         bool menuRequested = false;
         bool ownsTextInput = false;
         std::uint32_t leaseID = 0;
+        std::uint64_t reportedCharacterGeneration = 0;
 
         struct Event
         {
@@ -87,8 +88,8 @@ namespace Overlay::InputMethod
             std::uint64_t generation;
             {
                 std::lock_guard lock(stateMutex);
-                show = overlayVisible && applicationFocused && IsExternal(provider);
-                want = show && session.Active() && menuOpen.load();
+                show = overlayVisible && applicationFocused && NeedsMenuBridge(provider);
+                want = CanAcquireTextInput(provider, overlayVisible, applicationFocused, session.Active(), menuOpen.load());
                 id = session.ID();
                 generation = session.Generation();
             }
@@ -96,6 +97,9 @@ namespace Overlay::InputMethod
             if (ownsTextInput && (!want || leaseID != id))
             {
                 NativeAllowTextInput(false);
+                SKSE::log::info("IME text lease released: provider={}, editor={}, count={}", ProviderName(provider), leaseID,
+                    static_cast<int>(RE::ControlMap::GetSingleton()->GetRuntimeData().textEntryCount));
+                spdlog::default_logger()->flush();
                 ownsTextInput = false;
                 leaseID = 0;
             }
@@ -112,6 +116,9 @@ namespace Overlay::InputMethod
                 NativeAllowTextInput(true);
                 ownsTextInput = true;
                 leaseID = id;
+                SKSE::log::info("IME text lease acquired: provider={}, editor={}, count={}", ProviderName(provider), id,
+                    static_cast<int>(RE::ControlMap::GetSingleton()->GetRuntimeData().textEntryCount));
+                spdlog::default_logger()->flush();
             }
             {
                 std::lock_guard lock(stateMutex);
@@ -129,6 +136,15 @@ namespace Overlay::InputMethod
         void QueueCharacter(std::uint32_t code, CharacterSource source)
         {
             std::lock_guard lock(stateMutex);
+            if (provider == Provider::kInputMethodUnlocked && source == CharacterSource::kGame && code >= 0x100 &&
+                reportedCharacterGeneration != session.Generation())
+            {
+                reportedCharacterGeneration = session.Generation();
+                // 每个编辑会话仅记录一次非 ASCII 事件的接收条件，不记录用户输入内容。
+                SKSE::log::info("IMU character arrived: editing={}, editor={}, visible={}, focused={}, leaseReady={}",
+                    session.Active(), session.ID(), overlayVisible, applicationFocused, textLeaseReady);
+                spdlog::default_logger()->flush();
+            }
             if (!overlayVisible || !applicationFocused || !session.Active() || !AcceptsSource(provider, source)) return;
             if (IsExternal(provider) && !textLeaseReady) return;
             if (source == CharacterSource::kScaleform && IsPasteFallback(provider, code, ctrlPressed))
@@ -296,9 +312,10 @@ namespace Overlay::InputMethod
         provider = SelectProvider(GetModuleHandleW(L"SimpleIME.dll") != nullptr,
             GetModuleHandleW(L"SkyrimInputMethod.dll") != nullptr, GetModuleHandleW(L"InputMethodUnlocked.dll") != nullptr);
         SKSE::log::info("External IME provider: {}", ProviderName(provider));
+        spdlog::default_logger()->flush();
         if (auto* ui = RE::UI::GetSingleton(); ui && IsExternal(provider))
         {
-            ui->Register(kMenuName, TextInputMenu::Create);
+            if (NeedsMenuBridge(provider)) ui->Register(kMenuName, TextInputMenu::Create);
             ui->AddEventSink<RE::MenuOpenCloseEvent>(&menuObserver);
         }
         if (provider == Provider::kConflict)
@@ -333,7 +350,13 @@ namespace Overlay::InputMethod
     bool UsesMenuInput()
     {
         std::lock_guard lock(stateMutex);
-        return IsExternal(provider) && overlayVisible && applicationFocused && menuOpen.load();
+        return NeedsMenuBridge(provider) && overlayVisible && applicationFocused && menuOpen.load();
+    }
+
+    bool UsesGameInputMethod()
+    {
+        std::lock_guard lock(stateMutex);
+        return provider == Provider::kInputMethodUnlocked && overlayVisible && applicationFocused;
     }
 
     bool WantsTextInput()
