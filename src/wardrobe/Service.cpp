@@ -96,6 +96,23 @@ namespace Wardrobe
         else { status = store.error; RebuildIndex(); }
     }
 
+    bool Service::GenerateAliasTemplate(const std::string& plugin, bool overwrite)
+    {
+        if (!plugins.contains(plugin)) { status = "Plugin not found: " + plugin; return false; }
+        Json items = Json::object();
+        // 名称取游戏原名，部件沿用当前识别结果（包含已有元数据修正）。
+        for (const auto& entry : catalog)
+            if (entry.plugin == plugin)
+            {
+                const auto key = FormKey::Parse(entry.key);
+                if (key) items[std::format("{:06X}", key->localFormID)] =
+                    {{"name", entry.originalName}, {"part", PartIDs[entry.part]}};
+            }
+        if (!store.WriteAliasTemplate(plugin, items, overwrite)) { status = store.error; return false; }
+        status = "Alias template ready: 00_Generated." + plugin + ".json";
+        return true;
+    }
+
     bool Service::Save()
     {
         FlushWorkingSave();

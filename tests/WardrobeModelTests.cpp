@@ -45,7 +45,24 @@ int main()
             output << Json{{"plugin", "Clothes.esp"}, {"items", {{"000ABC", {{"name", "裙子"}, {"pinyin", "qun zi"}, {"note", "包备注"}}}}}}.dump();
         }
         MetadataStore store(root);
+        Json templateItems = {{"000ABC", {{"name", "原始裙子"}, {"part", "body"}}},
+            {"000DEF", {{"name", "丝袜"}, {"part", "stockings"}}}};
+        Require(store.WriteAliasTemplate("Clothes.esp", templateItems, false), "Generate alias template");
+        const auto templatePath = root / "AliasPacks" / "00_Generated.Clothes.esp.json";
+        Json generated;
+        { std::ifstream input(templatePath); input >> generated; }
+        Require(generated["plugin"] == "Clothes.esp" && generated["items"] == templateItems, "Template names and recognized parts roundtrip");
+        auto updatedItems = templateItems;
+        updatedItems["000ABC"]["name"] = "更新原名";
+        Require(store.WriteAliasTemplate("Clothes.esp", updatedItems, false), "Keep existing template on registration");
+        { std::ifstream input(templatePath); input >> generated; }
+        Require(generated["items"] == templateItems, "Registration preserves edited template");
+        Require(store.WriteAliasTemplate("Clothes.esp", updatedItems, true), "Manual regeneration");
+        { std::ifstream input(templatePath); input >> generated; }
+        Require(generated["items"] == updatedItems, "Regeneration replaces generated template");
+        Require(!store.WriteAliasTemplate("../Escape.esp", templateItems, true), "Reject template path traversal");
         Require(store.Load(), "Initial load");
+        Require(store.Effective("Clothes.esp|000DEF").value("part", "") == "stockings", "Generated template loads recognized part");
         Require(store.Effective("Clothes.esp|000ABC").value("alias", "") == "裙子", "Alias pack fallback");
         store.database["items"]["Clothes.esp|000ABC"] = {{"favorite", true}};
         Require(store.Effective("Clothes.esp|000ABC").value("alias", "") == "裙子", "Favorite does not shadow pack alias");

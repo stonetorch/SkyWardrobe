@@ -30,6 +30,7 @@ namespace Wardrobe
         void OverwritePreset();
         void UndoOverwrite();
         bool Save();
+        bool GenerateAliasTemplate(const std::string& plugin, bool overwrite = false);
         int Score(const ClothingEntry& entry, std::string_view query) const;
         int Part(const ClothingEntry& entry) const;
         std::string Name(const ClothingEntry& entry) const;

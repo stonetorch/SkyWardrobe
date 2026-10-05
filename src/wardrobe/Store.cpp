@@ -64,6 +64,39 @@ namespace Wardrobe
         }
     }
 
+    bool MetadataStore::WriteAliasTemplate(const std::string& plugin, const Json& items, bool overwrite)
+    {
+        if (!writable) return false;
+        try
+        {
+            // 插件名必须是文件名，防止模板路径越出别名包目录。
+            if (plugin.empty() || plugin.find_first_of("<>:\"/\\|?*") != std::string::npos ||
+                plugin.back() == '.' || plugin.back() == ' ')
+                throw std::runtime_error("Invalid plugin filename");
+            Json check = EmptyDatabase();
+            for (const auto& [local, metadata] : items.items()) check["items"][plugin + "|" + local] = metadata;
+            ValidateDatabase(check);
+            const auto directory = root_ / "AliasPacks";
+            std::filesystem::create_directories(directory);
+            const auto path = directory / ("00_Generated." + plugin + ".json");
+            // 重新注册不会覆盖用户已经编辑过的模板；只有手动重新生成才替换。
+            if (!overwrite && std::filesystem::exists(path)) { error.clear(); return true; }
+            auto temporary = path; temporary += ".tmp";
+            {
+                std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+                output << Json{{"plugin", plugin}, {"items", items}}.dump(2, ' ', false) << '\n';
+                output.flush();
+                output.close();
+                if (!output) throw std::runtime_error("Cannot write alias template");
+            }
+            if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                throw std::runtime_error("Cannot replace alias template: " + std::to_string(GetLastError()));
+            error.clear();
+            return true;
+        }
+        catch (const std::exception& e) { error = e.what(); return false; }
+    }
+
     bool MetadataStore::Save()
     {
         if (!writable) return false;

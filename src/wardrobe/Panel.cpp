@@ -524,7 +524,8 @@ namespace Wardrobe
                     if (ImGui::Checkbox("##registered", &enabled))
                     {
                         auto& metadata = database["pluginCategories"][plugin]; if (!metadata.is_object()) metadata = Json::object();
-                        metadata["enabled"] = enabled; service.Save();
+                        metadata["enabled"] = enabled;
+                        if (service.Save() && enabled) service.GenerateAliasTemplate(plugin);
                     }
                     ImGui::SameLine();
                     if (ImGui::Selectable((plugin + " (" + std::to_string(count) + ")").c_str(), selectedPlugin == plugin))
@@ -547,6 +548,14 @@ namespace Wardrobe
                     auto& metadata = database["pluginCategories"][selectedPlugin]; if (!metadata.is_object()) metadata = Json::object();
                     metadata["alias"] = pluginAlias; metadata["search"] = Split(pluginKeys); service.Save();
                 }
+                const bool registered = !selectedPlugin.empty() && database["pluginCategories"].contains(selectedPlugin) &&
+                    database["pluginCategories"][selectedPlugin].value("enabled", true);
+                ImGui::BeginDisabled(!registered);
+                if (ImGui::Button(Tr("Regenerate alias template", "重新生成别名包模板")))
+                    service.GenerateAliasTemplate(selectedPlugin, true);
+                ImGui::EndDisabled();
+                ImGui::TextWrapped("%s", Tr("Regeneration replaces this plugin's generated template. Names use original item names; parts use current detection. Reload JSON after editing.",
+                    "重新生成会覆盖该插件的生成模板。名称使用物品原名，部件使用当前识别结果；编辑文件后请重新加载 JSON。"));
             }
             if (ImGui::CollapsingHeader(Tr("Custom part names", "自定义部件名称")))
             {
