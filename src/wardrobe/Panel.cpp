@@ -38,7 +38,7 @@ namespace Wardrobe
         std::string quickGroup, editingGroup, groupName, groupAlias, groupNote, groupSearch;
         int quickPart = 0;
         bool openGroupEditor = false;
-        std::string referenceSearch, quickTargetSearch, itemCategorySearch;
+        std::string referenceSearch, reverseReferenceSearch, quickTargetSearch, itemCategorySearch;
         QuickAction pendingQuickAction = QuickAction::None;
 
         bool MatchesGroupSearch(const std::string& id, const Json& metadata, const std::string& query)
@@ -327,6 +327,7 @@ namespace Wardrobe
             groupNote = metadata->value("note", "");
             groupSearch = Join(metadata->value("search", Json::array()));
             referenceSearch.clear();
+            reverseReferenceSearch.clear();
             openGroupEditor = true;
         }
 
@@ -336,7 +337,7 @@ namespace Wardrobe
             const auto* viewport = ImGui::GetMainViewport();
             const float scale = ImGui::GetFontSize() / 18.0f;
             ImGui::SetNextWindowSize(ImVec2(std::min(900.0f * scale, viewport->WorkSize.x * 0.9f),
-                std::min(620.0f * scale, viewport->WorkSize.y * 0.85f)), ImGuiCond_Appearing);
+                std::min(780.0f * scale, viewport->WorkSize.y * 0.85f)), ImGuiCond_Appearing);
             if (!ImGui::BeginPopupModal(Tr("Group metadata", "服装组信息"), nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
             auto& service = Service::Get();
             const auto [collection, id] = SplitGroupID(editingGroup);
@@ -362,39 +363,72 @@ namespace Wardrobe
                 { service.store.database[collection][id]["enabled"] = false; service.Save(); ImGui::CloseCurrentPopup(); }
             }
             ImGui::SeparatorText(Tr("References", "引用服装组"));
-            ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputTextWithHint("##reference search", Tr("Search groups / pinyin...", "搜索服装组 / 拼音…"), &referenceSearch);
-            // 每帧冻结两栏成员，点击后下一帧移动，避免同一次点击在另一栏再次处理。
+            // 两个引用方向共用一套两栏布局：左栏点击建立引用，右栏点击解除引用。
+            // 剩余高度两个列表各分一半，否则第一段列表会吃掉全部空间。
+            const float referenceListHeight = std::max(80.0f, (ImGui::GetContentRegionAvail().y
+                - (ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() * 2.0f) * 2.0f) * 0.5f);
+            // 本组自己的引用列表；反向列表需要逐条查看对方是否引用本组。
             const auto refs = service.Group(editingGroup) ? service.Group(editingGroup)->value("references", std::vector<std::string>{}) : std::vector<std::string>{};
-            if (ImGui::BeginTable("Group references", 2, ImGuiTableFlags_SizingStretchSame))
+            // reverse 为真时编辑"对方引用本组"，为假时编辑"本组引用对方"。
+            const auto drawGroupReferences = [&](const char* tableID, std::string& query, bool reverse)
             {
-                for (int column = 0; column < 2; ++column)
+                ImGui::PushID(tableID);
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::InputTextWithHint("##search", Tr("Search groups / pinyin...", "搜索服装组 / 拼音…"), &query);
+                // 每帧冻结两栏成员，点击后下一帧移动，避免同一次点击在另一栏再次处理。
+                std::vector<std::string> linked;
+                for (const char* field : {"categories", "pluginCategories", "groups"})
+                    for (const auto& [otherID, metadata] : service.store.database[field].items())
+                    {
+                        const auto target = std::string(field) + ":" + otherID;
+                        if (target == editingGroup) continue;
+                        // 正向看本组的引用列表，反向看对方是否把本组列为引用。
+                        const auto owners = reverse ? metadata.value("references", std::vector<std::string>{}) : refs;
+                        const auto& wanted = reverse ? editingGroup : target;
+                        if (std::find(owners.begin(), owners.end(), wanted) != owners.end()) linked.push_back(target);
+                    }
+                if (ImGui::BeginTable("Group references", 2, ImGuiTableFlags_SizingStretchSame))
                 {
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(column == 0 ? Tr("Available — click to reference", "未引用 · 点击添加") : Tr("Referenced — click to remove", "已引用 · 点击移除"));
-                    ImGui::PushID(column);
-                    ImGui::BeginChild("Reference list", ImVec2(0, std::max(80.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing())), ImGuiChildFlags_Borders);
-                    for (const char* field : {"categories", "pluginCategories", "groups"})
-                        for (const auto& [otherID, metadata] : service.store.database[field].items())
-                        {
-                            const auto target = std::string(field) + ":" + otherID;
-                            const bool referenced = std::find(refs.begin(), refs.end(), target) != refs.end();
-                            if (target == editingGroup || referenced != (column == 1) || !MatchesGroupSearch(otherID, metadata, referenceSearch)) continue;
-                            if (ImGui::Selectable((ObjectName(otherID, metadata) + "##" + target).c_str()))
+                    for (int column = 0; column < 2; ++column)
+                    {
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(column == 0
+                            ? (reverse ? Tr("Not referencing this group — click to add", "未引用本组 · 点击加入")
+                                       : Tr("Available — click to reference", "未引用 · 点击添加"))
+                            : (reverse ? Tr("Referencing this group — click to remove", "已引用本组 · 点击移除")
+                                       : Tr("Referenced — click to remove", "已引用 · 点击移除")));
+                        ImGui::PushID(column);
+                        ImGui::BeginChild("Reference list", ImVec2(0, referenceListHeight), ImGuiChildFlags_Borders);
+                        for (const char* field : {"categories", "pluginCategories", "groups"})
+                            for (const auto& [otherID, metadata] : service.store.database[field].items())
                             {
-                                auto updated = service.store.database[collection][id].value("references", std::vector<std::string>{});
-                                std::erase(updated, target);
-                                if (!referenced) updated.push_back(target);
-                                service.store.database[collection][id]["references"] = updated;
-                                service.Save();
+                                const auto target = std::string(field) + ":" + otherID;
+                                if (target == editingGroup) continue;
+                                const bool referenced = std::find(linked.begin(), linked.end(), target) != linked.end();
+                                if (referenced != (column == 1) || !MatchesGroupSearch(otherID, metadata, query)) continue;
+                                if (ImGui::Selectable((ObjectName(otherID, metadata) + "##" + target).c_str()))
+                                {
+                                    // 反向写入对方记录的引用，正向写入本组记录的引用。
+                                    auto& owner = reverse ? service.store.database[field][otherID] : service.store.database[collection][id];
+                                    const auto& member = reverse ? editingGroup : target;
+                                    auto updated = owner.value("references", std::vector<std::string>{});
+                                    std::erase(updated, member);
+                                    if (!referenced) updated.push_back(member);
+                                    owner["references"] = updated;
+                                    service.Save();
+                                }
+                                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", target.c_str());
                             }
-                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", target.c_str());
-                        }
-                    ImGui::EndChild();
-                    ImGui::PopID();
+                        ImGui::EndChild();
+                        ImGui::PopID();
+                    }
+                    ImGui::EndTable();
                 }
-                ImGui::EndTable();
-            }
+                ImGui::PopID();
+            };
+            drawGroupReferences("Reference", referenceSearch, false);
+            ImGui::SeparatorText(Tr("Add to other groups", "把自己加入对方的引用"));
+            drawGroupReferences("Reverse reference", reverseReferenceSearch, true);
             ImGui::EndDisabled();
             if (ImGui::Button(Tr("Close", "关闭"))) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
