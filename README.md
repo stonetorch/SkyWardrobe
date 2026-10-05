@@ -18,7 +18,7 @@ wardrobe clear
 wardrobe close
 ```
 
-`preset` 支持预设 ID 或完整名称。`wardrobe` 打开后自动关闭控制台。关闭按钮和 Esc 恢复游戏视角输入。界面设置可以启用 / 禁用快捷键并重新绑定；默认禁用，预选 F11。窗口可拖动与调整大小，布局保存在 `SkyWardrobe/ImGui.ini`；UI 缩放与鼠标灵敏度分别设置。
+`preset` 支持预设 ID 或完整名称。`wardrobe` 打开后自动关闭控制台。关闭按钮和 Esc 恢复游戏视角输入；外部输入法编辑期间，Esc 先由输入法取消组词或退出文本编辑，再按 Esc 关闭衣柜。界面设置可以启用 / 禁用快捷键并重新绑定；默认禁用，预选 F11。窗口可拖动与调整大小，布局保存在 `SkyWardrobe/ImGui.ini`；UI 缩放与鼠标灵敏度分别设置。
 
 ## 衣柜功能
 
@@ -34,6 +34,14 @@ wardrobe close
 - **清除外观覆盖**：设置 SOS 当前 Outfit 为空并刷新玩家，工作搭配和已保存预设保留。SOS 自己的地点 / 战斗自动换装可能在后续事件中再次选择服装；需要持续使用衣柜外观时请在 SOS 中关闭相应自动切换。
 
 当前外观应用目标是玩家。内部只维护一个 SOS Outfit：`__WARDROBE_RUNTIME__`。不将每个 JSON 预设复制为 SOS Outfit。快速请求会串行执行，等待期间的新选择只保留最新一次；加载游戏时取消旧回调链。后台检查 API 启用状态、完整解析所有 FormKey，依次覆盖 / 设置 / 刷新并回读当前 Outfit。缺失服装时拒绝应用整个预设，并显示缺失 ID。
+
+## 外部输入法
+
+自动接入 **SimpleIME**、**Skyrim Input Method - Use System's IME**、**Input Method Unlocked**，无需为衣柜安装额外桥接 DLL。三种接入均已编译实现，游戏内兼容性仍需逐一验收。只启用其中一个输入法模组；同时加载多个时衣柜不申请外部输入法焦点，设置页显示冲突提示。
+
+SimpleIME 的候选窗位置请设为 **Follow Cursor** 或 **None**，其 GFx 光标定位无法直接跟随独立 ImGui 插入点。Input Method Unlocked 的运行限制依其安装版本而定，窗口 / 无边框模式及 IMM 兼容输入法是作者公布的支持范围。没有外部输入法模组时可继续使用 Ctrl+V；本插件不提供独立 IMM / TSF 后备。
+
+界面设置显示识别到的输入法。搜索、别名、备注等标准文本框共用接入；焦点退出、关闭衣柜、切出游戏或读档会清理本模组申请和待处理文字。实现与来源见 [输入法接入说明](docs/InputMethodIntegration.md)，游戏验收见 [RuntimeChecks](docs/RuntimeChecks.md)。
 
 ## JSON 与字体配置
 

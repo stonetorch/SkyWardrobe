@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "ui/Overlay.h"
+#include "ui/InputMethod.h"
 #include "wardrobe/Service.h"
 
 namespace
@@ -45,6 +46,11 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
     const auto* messaging = SKSE::GetMessagingInterface();
     return messaging && messaging->RegisterListener([](SKSE::MessagingInterface::Message* message) {
         Wardrobe::OnGameMessage(message->type);
+        if (message->type == SKSE::MessagingInterface::kPreLoadGame || message->type == SKSE::MessagingInterface::kNewGame)
+        {
+            Overlay::InputMethod::SetOverlayState(false, true);
+            Overlay::CloseAllMenus();
+        }
         if (message->type == SKSE::MessagingInterface::kDataLoaded) {
             OnDataLoaded();
         }

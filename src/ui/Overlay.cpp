@@ -1,6 +1,7 @@
 #include "ui/Overlay.h"
 #include "ui/IconsFontAwesome6.h"
 #include "ui/UiTabs.h"
+#include "ui/InputMethod.h"
 
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
@@ -10,6 +11,7 @@
 #include <dxgi.h>
 #include <MinHook.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 
@@ -43,6 +45,7 @@ namespace
     PresentFn originalPresent = nullptr;
     WNDPROC originalWndProc = nullptr;
     HWND window = nullptr;
+    bool unicodeWindow = false;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
     bool initialized = false;
@@ -77,7 +80,7 @@ namespace
 
     struct InputRecord
     {
-        enum class Kind { kMouseMove, kMouseButton, kMouseWheel, kKey, kCharacter } kind;
+        enum class Kind { kMouseMove, kMouseButton, kMouseWheel, kKey } kind;
         UINT code;
         bool down;
         std::int32_t deltaX = 0;
@@ -129,37 +132,44 @@ namespace
     class OverlayInputSink final : public RE::BSTEventSink<RE::InputEvent*>
     {
     public:
-        RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events, RE::BSTEventSource<RE::InputEvent*>*) override
+        RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events, RE::BSTEventSource<RE::InputEvent*>* source) override
         {
             if (!inputOverlayVisible.load() || !events) return RE::BSEventNotifyControl::kContinue;
-            std::lock_guard lock(inputMutex);
-            for (auto* event = *events; event; event = event->next)
+            const bool menuInput = Overlay::InputMethod::UsesMenuInput();
             {
-                if (auto* button = event->AsButtonEvent())
+                std::lock_guard lock(inputMutex);
+                for (auto* event = *events; event; event = event->next)
                 {
-                    const auto code = button->GetIDCode();
-                    const auto down = button->IsPressed();
-                    if (event->GetDevice() == RE::INPUT_DEVICE::kMouse)
+                    if (auto* button = event->AsButtonEvent())
                     {
-                        if (code < 5) inputRecords.push_back({ InputRecord::Kind::kMouseButton, code, down });
-                        else if (code == 8 || code == 9) inputRecords.push_back({ InputRecord::Kind::kMouseWheel, code, down });
+                        const auto code = button->GetIDCode();
+                        const auto down = button->IsPressed();
+                        if (event->GetDevice() == RE::INPUT_DEVICE::kMouse)
+                        {
+                            if (code < 5) inputRecords.push_back({ InputRecord::Kind::kMouseButton, code, down });
+                            else if (code == 8 || code == 9) inputRecords.push_back({ InputRecord::Kind::kMouseWheel, code, down });
+                        }
+                        else if (event->GetDevice() == RE::INPUT_DEVICE::kKeyboard)
+                        {
+                            const auto virtualKey = ScanCodeToVirtualKey(code);
+                            if (virtualKey && !menuInput) inputRecords.push_back({ InputRecord::Kind::kKey, virtualKey, down });
+                        }
                     }
-                    else if (event->GetDevice() == RE::INPUT_DEVICE::kKeyboard)
+                    else if (auto* character = event->AsCharEvent())
                     {
-                        const auto virtualKey = ScanCodeToVirtualKey(code);
-                        if (virtualKey) inputRecords.push_back({ InputRecord::Kind::kKey, virtualKey, down });
+                        Overlay::InputMethod::QueueGameCharacter(character->keyCode);
                     }
-                }
-                else if (auto* character = event->AsCharEvent())
-                {
-                    inputRecords.push_back({ InputRecord::Kind::kCharacter, character->keyCode, true });
-                }
-                else if (auto* movement = event->AsMouseMoveEvent())
-                {
-                    inputRecords.push_back({ InputRecord::Kind::kMouseMove, 0, false,
-                        movement->mouseInputX, movement->mouseInputY });
+                    else if (auto* movement = event->AsMouseMoveEvent())
+                    {
+                        inputRecords.push_back({ InputRecord::Kind::kMouseMove, 0, false,
+                            movement->mouseInputX, movement->mouseInputY });
+                    }
                 }
             }
+            // 显式交给菜单输入链，让输入法先过滤组词按键；仍截断 PlayerControls，避免游戏动作。
+            // 不在 inputMutex 内调用引擎，菜单回调可能同步排队新的 UI 输入。
+            if (menuInput)
+                if (auto* menus = RE::MenuControls::GetSingleton()) menus->ProcessEvent(events, source);
             return RE::BSEventNotifyControl::kStop;
         }
     } inputSink;
@@ -217,9 +227,6 @@ namespace
                         io.AddKeyEvent(ImGuiMod_Ctrl, leftCtrl || rightCtrl);
                     }
                 }
-                break;
-            case InputRecord::Kind::kCharacter:
-                io.AddInputCharacter(record.code);
                 break;
             }
         }
@@ -305,6 +312,7 @@ namespace
     {
         inputOverlayVisible = show;
         visible = show;
+        Overlay::InputMethod::SetOverlayState(show, true);
         if (auto* controls = RE::PlayerControls::GetSingleton(); controls && controls->lookHandler)
         {
             if (show && !lookInputSuspended)
@@ -354,9 +362,13 @@ namespace
 
     LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
+        if (message == WM_ACTIVATEAPP && !wParam)
+            Overlay::InputMethod::SetOverlayState(inputOverlayVisible.load(), false);
         if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
         {
-            if (visible && !waitingForKey && wParam == VK_ESCAPE) { Overlay::CloseAllMenus(); return 0; }
+            // 外部输入法通过菜单链处理 Esc/组词；不能先在原始 Win32 按键处关闭衣柜。
+            const bool menuInput = Overlay::InputMethod::UsesMenuInput();
+            if (visible && !waitingForKey && !menuInput && wParam == VK_ESCAPE) { Overlay::CloseAllMenus(); return 0; }
             if (waitingForKey)
             {
                 if ((lParam & (1LL << 30)) == 0)
@@ -365,7 +377,7 @@ namespace
                 }
                 return 0;
             }
-            if (hotkeyEnabled && wParam == toggleKey && !(RE::UI::GetSingleton() && RE::UI::GetSingleton()->IsMenuOpen(RE::BSFixedString("Console"))))
+            if (hotkeyEnabled && wParam == toggleKey && !Overlay::InputMethod::WantsTextInput() && !(RE::UI::GetSingleton() && RE::UI::GetSingleton()->IsMenuOpen(RE::BSFixedString("Console"))))
             {
                 if ((lParam & (1LL << 30)) == 0)
                 {
@@ -378,7 +390,8 @@ namespace
 
         // 打开界面时不再把 Win32 的绝对坐标或按键喂给 ImGui。
         // Skyrim 输入事件流是唯一来源，避免绘制指针与控件命中位置不同步。
-        return CallWindowProcW(originalWndProc, hwnd, message, wParam, lParam);
+        return unicodeWindow ? CallWindowProcW(originalWndProc, hwnd, message, wParam, lParam) :
+            CallWindowProcA(originalWndProc, hwnd, message, wParam, lParam);
     }
 
     // 加载主字体，并把 Font Awesome 图标合并进去。
@@ -450,8 +463,17 @@ namespace
             SKSE::log::error("Dear ImGui backend initialization failed");
             return false;
         }
+        // 只发布 ImGui 文本焦点；候选窗、Windows 消息和输入上下文归外部模组所有。
+        ImGui::GetPlatformIO().Platform_SetImeDataFn = [](ImGuiContext*, ImGuiViewport*, ImGuiPlatformImeData* data)
+        {
+            Overlay::InputMethod::PublishTextFocus(data->WantTextInput, ImGui::GetActiveID());
+        };
         SetLastError(0);
-        originalWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WindowProc)));
+        unicodeWindow = IsWindowUnicode(window) != FALSE;
+        // 保持窗口原来的 A/W 消息语义，避免改变 IMU 的 ANSI 字符转换管线。
+        originalWndProc = reinterpret_cast<WNDPROC>(unicodeWindow ?
+            SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WindowProc)) :
+            SetWindowLongPtrA(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WindowProc)));
         if (!originalWndProc)
         {
             SKSE::log::error("Cannot attach overlay window input: {}", GetLastError());
@@ -484,9 +506,14 @@ namespace
         Wardrobe::ProcessUiRequests();
         if (visible)
         {
+            DWORD foregroundProcess = 0;
+            GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
+            // SimpleIME 会把焦点移到同进程的 IME 窗口，不能误当作 Alt+Tab。
+            Overlay::InputMethod::SetOverlayState(true, foregroundProcess == GetCurrentProcessId());
             ImGui_ImplDX11_NewFrame();
             // 不调用 Win32 后端 NewFrame：它会覆盖游戏事件流驱动的虚拟指针位置。
             PrepareGameInputFrame();
+            Overlay::InputMethod::Flush();
             if (visible) FlushInputRecords();
             ImGui::NewFrame();
             ImGui::GetStyle() = baseStyle;
@@ -496,6 +523,8 @@ namespace
             if (visible) DrawSettings();
             if (closeAllMenusRequested.exchange(false)) SetOverlayVisible(false);
             ImGui::Render();
+            // 回调不保证在输入框 ID 改变但位置不变时执行，帧尾再同步一次编辑会话。
+            Overlay::InputMethod::PublishTextFocus(visible && !waitingForKey && ImGui::GetCurrentContext()->PlatformImeData.WantTextInput, ImGui::GetActiveID());
 
             ID3D11Texture2D* backBuffer = nullptr;
             ID3D11RenderTargetView* target = nullptr;
@@ -542,11 +571,13 @@ void Overlay::DrawInterfaceSettings()
     if (ImGui::Button(Tr("Change key", "修改按键"))) waitingForKey = true;
     if (ImGui::SliderFloat(Tr("UI scale", "界面缩放"), &uiScale, kMinScale, kMaxScale, "%.2fx")) SaveSettings();
     if (ImGui::SliderFloat(Tr("Pointer sensitivity", "鼠标灵敏度"), &cursorSensitivity, kMinCursorSensitivity, kMaxCursorSensitivity, "%.2fx")) SaveSettings();
-    ImGui::TextWrapped("%s", Tr("Drag window borders to resize. Esc closes. Chinese text can be pasted with Ctrl+V.", "拖动窗口边缘调整大小。Esc 关闭界面。中文可用 Ctrl+V 粘贴。"));
+    ImGui::TextWrapped("%s", Tr("Drag window borders to resize. Ctrl+V pastes text. External IME support is shown below.", "拖动窗口边缘调整大小。Ctrl+V 粘贴文本。外部输入法接入状态见下方。"));
+    Overlay::InputMethod::DrawStatus();
 }
 void Overlay::Install()
 {
     LoadSettings();
+    Overlay::InputMethod::Install();
     if (auto* inputManager = RE::BSInputDeviceManager::GetSingleton())
     {
         inputManager->PrependEventSink(&inputSink);
