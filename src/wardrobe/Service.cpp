@@ -7,7 +7,7 @@ namespace Wardrobe
 {
     Service& Service::Get() { static Service service; return service; }
 
-    Service::~Service() { FlushWorkingSave(); }
+    Service::~Service() { FlushSave(); }
 
     void Service::SaveWorking()
     {
@@ -16,7 +16,7 @@ namespace Wardrobe
         ++revision;
         if (!store.writable) { status = store.error; return; }
         // 穿脱不改变搜索元数据；连续操作只保留最新待写状态，避免全目录重建。
-        workingSaveQueued_ = true;
+        saveQueued_ = true;
         status = "Saving";
         PollSave();
     }
@@ -30,7 +30,7 @@ namespace Wardrobe
             catch (const std::exception& e) { store.error = e.what(); }
             status = store.error.empty() ? "Saved" : store.error;
         }
-        if (!workingSaveQueued_) return;
+        if (!saveQueued_) return;
         try
         {
             // 同一时刻只有一个写入者，旧快照完成后才提交最新快照。
@@ -38,21 +38,21 @@ namespace Wardrobe
             {
                 return store.SaveSnapshot(std::move(snapshot));
             });
-            workingSaveQueued_ = false;
+            saveQueued_ = false;
             status = "Saving";
         }
         catch (const std::exception& e)
         {
-            workingSaveQueued_ = false;
+            saveQueued_ = false;
             store.error = e.what();
             status = store.error;
         }
     }
 
-    void Service::FlushWorkingSave()
+    void Service::FlushSave()
     {
-        // 显式保存、重载和退出必须先排空后台写入，防止旧快照覆盖新数据。
-        while (pendingSave_.valid() || workingSaveQueued_)
+        // 重载和退出必须先排空后台写入，防止旧快照覆盖新数据。
+        while (pendingSave_.valid() || saveQueued_)
         {
             if (pendingSave_.valid()) pendingSave_.wait();
             PollSave();
@@ -85,9 +85,12 @@ namespace Wardrobe
 
     void Service::Reload()
     {
-        FlushWorkingSave();
+        FlushSave();
         if (store.Load())
         {
+            ClearPinyinSearchCache();
+            indexedCategories_ = nullptr;
+            indexedPlugins_ = nullptr;
             working = store.database["workingItems"].get<std::vector<std::string>>();
             activePreset = store.database["activePreset"].get<std::string>();
             presetBaseline_ = working;
@@ -117,13 +120,11 @@ namespace Wardrobe
 
     bool Service::Save()
     {
-        FlushWorkingSave();
-        store.database["workingItems"] = working;
-        store.database["activePreset"] = activePreset;
+        if (!store.writable) { status = store.error; return false; }
         RebuildIndex();
-        if (!store.Save()) { status = store.error; return false; }
-        status = "Saved";
-        return true;
+        // 元数据修改与穿脱共用串行后台写入；返回成功表示已排队，写盘失败由 PollSave 提示。
+        SaveWorking();
+        return saveQueued_ || pendingSave_.valid();
     }
 
     const ClothingEntry* Service::Find(std::string_view key) const
@@ -139,11 +140,16 @@ namespace Wardrobe
 
     void Service::RebuildIndex()
     {
-        ClearPinyinSearchCache();
+        // 拼音缓存按文本建立，普通编辑保留缓存；只有重载时才清理旧文本。
+        const bool sharedMetadataChanged = indexedCategories_ != store.database["categories"] ||
+            indexedPlugins_ != store.database["pluginCategories"];
         ++revision;
         for (auto& entry : catalog)
         {
-            entry.metadata = store.Effective(entry.key);
+            auto metadata = store.Effective(entry.key);
+            // 组归属等修改不会影响大部分服装，避免重复构建全目录搜索词。
+            if (!sharedMetadataChanged && !entry.searchKeys.empty() && entry.metadata == metadata) continue;
+            entry.metadata = std::move(metadata);
             const auto alias = entry.metadata.value("alias", "");
             entry.displayName = !alias.empty() ? alias : !entry.originalName.empty() ? entry.originalName : entry.key;
             entry.part = 0;
@@ -175,6 +181,8 @@ namespace Wardrobe
             // 重建目录时预先转换中文，查询和面板重绘只读取缓存。
             for (const auto& [key, pinyin] : entry.searchKeys) CachePinyinSearch(key, pinyin);
         }
+        indexedCategories_ = store.database["categories"];
+        indexedPlugins_ = store.database["pluginCategories"];
         // 侧栏与预设也提前建立索引，未被服装引用的分类同样支持自动拼音。
         for (const char* collection : {"categories", "pluginCategories", "presets", "groups"})
             for (const auto& [id, metadata] : store.database[collection].items())

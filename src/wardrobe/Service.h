@@ -53,9 +53,11 @@ namespace Wardrobe
     private:
         void RebuildIndex();
         void SaveWorking();
-        void FlushWorkingSave();
+        void FlushSave();
         std::future<std::string> pendingSave_;
-        bool workingSaveQueued_ = false;
+        bool saveQueued_ = false;
+        Json indexedCategories_;
+        Json indexedPlugins_;
         Json undo_;
         Json undoGroup_;
         std::string undoGroupID_;
