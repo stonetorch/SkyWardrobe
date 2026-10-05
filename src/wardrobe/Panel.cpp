@@ -38,7 +38,7 @@ namespace Wardrobe
         std::string quickGroup, editingGroup, groupName, groupAlias, groupNote, groupSearch;
         int quickPart = 0;
         bool openGroupEditor = false;
-        std::string referenceSearch, quickTargetSearch;
+        std::string referenceSearch, quickTargetSearch, itemCategorySearch;
         QuickAction pendingQuickAction = QuickAction::None;
 
         bool MatchesGroupSearch(const std::string& id, const Json& metadata, const std::string& query)
@@ -143,6 +143,7 @@ namespace Wardrobe
             editSearch = Join(metadata.value("search", Json::array()));
             if (metadata.contains("pinyin")) editSearch += (editSearch.empty() ? "" : "\n") + metadata["pinyin"].get<std::string>();
             editCategories = metadata.value("categories", Json::array());
+            itemCategorySearch.clear();
             editPart = service.Part(entry);
             editFavorite = metadata.value("favorite", false);
             openEdit = true;
@@ -151,7 +152,10 @@ namespace Wardrobe
         void DrawItemEditor()
         {
             if (openEdit) { ImGui::OpenPopup(Tr("Item editor", "服装信息")); openEdit = false; }
-            ImGui::SetNextWindowSize(ImVec2(550, 570), ImGuiCond_FirstUseEver);
+            const auto* viewport = ImGui::GetMainViewport();
+            const float scale = ImGui::GetFontSize() / 18.0f;
+            ImGui::SetNextWindowSize(ImVec2(std::min(900.0f * scale, viewport->WorkSize.x * 0.9f),
+                std::min(650.0f * scale, viewport->WorkSize.y * 0.85f)), ImGuiCond_Appearing);
             if (!ImGui::BeginPopupModal(Tr("Item editor", "服装信息"), nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
             auto& service = Service::Get();
             ImGui::TextUnformatted(editItem.c_str());
@@ -166,18 +170,36 @@ namespace Wardrobe
                 ImGui::EndCombo();
             }
             ImGui::SeparatorText(Tr("Categories", "分类"));
-            ImGui::BeginChild("Item categories", ImVec2(0, 110), ImGuiChildFlags_Borders);
-            for (const auto& [id, category] : service.store.database["categories"].items())
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint("##item category search", Tr("Search categories / pinyin...", "搜索分类 / 拼音…"), &itemCategorySearch);
+            // 两栏使用帧开始时的快照；分类修改留在编辑草稿中，保存后才写入服装数据。
+            const auto selectedCategories = editCategories.get<std::vector<std::string>>();
+            if (ImGui::BeginTable("Item categories", 2, ImGuiTableFlags_SizingStretchSame))
             {
-                bool selected = std::find(editCategories.begin(), editCategories.end(), Json(id)) != editCategories.end();
-                if (ImGui::Checkbox((ObjectName(id, category) + "##" + id).c_str(), &selected))
+                for (int column = 0; column < 2; ++column)
                 {
-                    auto values = editCategories.get<std::vector<std::string>>();
-                    if (selected) values.push_back(id); else std::erase(values, id);
-                    editCategories = values;
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(column == 0 ? Tr("Available — click to add", "未分类 · 点击添加") : Tr("Assigned — click to remove", "已分类 · 点击移除"));
+                    ImGui::PushID(column);
+                    ImGui::BeginChild("Category list", ImVec2(0, std::max(80.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing())), ImGuiChildFlags_Borders);
+                    for (const auto& [id, category] : service.store.database["categories"].items())
+                    {
+                        const bool selected = std::find(selectedCategories.begin(), selectedCategories.end(), id) != selectedCategories.end();
+                        if (selected != (column == 1) || !MatchesGroupSearch(id, category, itemCategorySearch)) continue;
+                        if (ImGui::Selectable((ObjectName(id, category) + "##" + id).c_str()))
+                        {
+                            auto values = editCategories.get<std::vector<std::string>>();
+                            std::erase(values, id);
+                            if (!selected) values.push_back(id);
+                            editCategories = values;
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", id.c_str());
+                    }
+                    ImGui::EndChild();
+                    ImGui::PopID();
                 }
+                ImGui::EndTable();
             }
-            ImGui::EndChild();
             ImGui::BeginDisabled(!service.store.writable);
             if (ImGui::Button(Tr("Save", "保存")))
             {
@@ -206,7 +228,7 @@ namespace Wardrobe
             const bool favorite = metadata.value("favorite", false);
             const bool selected = quickAction == QuickAction::Add ? service.InGroup(entry, quickGroup)
                 : quickAction == QuickAction::Part ? entry.part == quickPart
-                : quickAction == QuickAction::Remove ? service.InGroup(entry, quickGroup) : service.InWorking(entry.key);
+                : quickAction == QuickAction::Remove ? service.InGroup(entry, CurrentGroup()) : service.InWorking(entry.key);
             const auto title = std::string(favorite ? "★ " : "") + service.Name(entry);
             const auto note = metadata.value("note", "");
             ImGui::PushID(entry.key.c_str());
@@ -234,7 +256,7 @@ namespace Wardrobe
             {
                 // 快捷状态消费点击，不改变活动工作搭配，也不触发双击应用。
                 if (quickAction == QuickAction::Add) service.SetGroupItem(quickGroup, entry, !selected);
-                else if (quickAction == QuickAction::Remove) service.SetGroupItem(quickGroup, entry, false);
+                else if (quickAction == QuickAction::Remove) service.SetGroupItem(CurrentGroup(), entry, false);
                 else
                 {
                     auto& item = service.store.database["items"][entry.key];
@@ -402,7 +424,8 @@ namespace Wardrobe
             if (ImGui::BeginPopup("Quick action menu"))
             {
                 if (ImGui::MenuItem(Tr("Add to group", "添加到服装组"))) { pendingQuickAction = QuickAction::Add; selectTarget = true; }
-                if (ImGui::MenuItem(Tr("Remove from group", "从服装组移除"))) { pendingQuickAction = QuickAction::Remove; selectTarget = true; }
+                // 移除始终针对当前视图，模组的原生服装列表不支持直接删除成员。
+                if (ImGui::MenuItem(Tr("Remove from group", "从服装组移除"), nullptr, false, service.Group(current) && view != View::Plugin)) quickAction = QuickAction::Remove;
                 if (ImGui::MenuItem(Tr("Mark part", "标记部件分类"))) { pendingQuickAction = QuickAction::Part; selectTarget = true; }
                 ImGui::EndPopup();
             }
@@ -415,7 +438,7 @@ namespace Wardrobe
             if (ImGui::BeginPopupModal(Tr("Quick action target", "选择快捷操作目标"), nullptr, ImGuiWindowFlags_NoSavedSettings))
             {
                 ImGui::TextUnformatted(pendingQuickAction == QuickAction::Part ? Tr("Select a part", "选择部件分类")
-                    : pendingQuickAction == QuickAction::Add ? Tr("Select a group to add to", "选择要添加到的服装组") : Tr("Select a group to remove from", "选择要移除服装的服装组"));
+                    : Tr("Select a group to add to", "选择要添加到的服装组"));
                 ImGui::SetNextItemWidth(-1.0f);
                 ImGui::InputTextWithHint("##quick target search", Tr("Search / pinyin...", "搜索 / 拼音…"), &quickTargetSearch);
                 ImGui::BeginChild("Quick targets", ImVec2(0, std::max(60.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing())), ImGuiChildFlags_Borders);
@@ -447,19 +470,18 @@ namespace Wardrobe
                 ImGui::EndPopup();
             }
             ImGui::EndDisabled();
-            if (quickAction != QuickAction::None && quickAction != QuickAction::Part && !service.Group(quickGroup)) quickAction = QuickAction::None;
+            if (quickAction == QuickAction::Add && !service.Group(quickGroup)) quickAction = QuickAction::None;
+            if (quickAction == QuickAction::Remove && (!service.Group(current) || view == View::Plugin)) quickAction = QuickAction::None;
             if (quickAction != QuickAction::None)
             {
+                const auto targetID = quickAction == QuickAction::Remove ? current : quickGroup;
+                const auto* target = service.Group(targetID);
+                const auto targetName = quickAction == QuickAction::Part ? PartName(quickPart)
+                    : target ? ObjectName(SplitGroupID(targetID).second, *target) : targetID;
+                ImGui::TextColored(ImVec4(1, 0.65f, 0.15f, 1), "%s: %s", quickAction == QuickAction::Add ? Tr("Adding to group", "正在快捷添加服装")
+                    : quickAction == QuickAction::Part ? Tr("Marking part", "正在快捷标记部件") : Tr("Removing from group", "正在快捷移除服装"), targetName.c_str());
                 ImGui::SameLine();
                 if (ImGui::Button(Tr("Finish quick action", "结束快捷操作"))) quickAction = QuickAction::None;
-                if (quickAction != QuickAction::None)
-                {
-                    const auto* target = service.Group(quickGroup);
-                    const auto targetName = quickAction == QuickAction::Part ? PartName(quickPart)
-                        : target ? ObjectName(SplitGroupID(quickGroup).second, *target) : quickGroup;
-                    ImGui::TextColored(ImVec4(1, 0.65f, 0.15f, 1), "%s: %s", quickAction == QuickAction::Add ? Tr("Adding to group", "正在快捷添加服装")
-                        : quickAction == QuickAction::Part ? Tr("Marking part", "正在快捷标记部件") : Tr("Removing from group", "正在快捷移除服装"), targetName.c_str());
-                }
             }
         }
 
