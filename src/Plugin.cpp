@@ -32,9 +32,14 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
     if (auto logDirectory = SKSE::log::log_directory()) {
         auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
             (*logDirectory / "SkyWardrobe.log").string(), true);
-        spdlog::set_default_logger(std::make_shared<spdlog::logger>("global", std::move(sink)));
+        auto logger = std::make_shared<spdlog::logger>("global", std::move(sink));
+        logger->set_level(spdlog::level::info);
+        // 普通日志使用文件缓冲，不配置逐条或定时刷新。
+        spdlog::set_default_logger(std::move(logger));
         SKSE::log::info("SkyWardrobe loaded");
         SKSE::log::info("Skyrim runtime {}", REL::Module::get().version().string());
+        // 启动记录只显式刷新一次，立即确认本次加载已写入日志。
+        spdlog::default_logger()->flush();
     }
 
     const auto* messaging = SKSE::GetMessagingInterface();

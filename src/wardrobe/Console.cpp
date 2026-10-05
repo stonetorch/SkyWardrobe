@@ -35,7 +35,7 @@ namespace Wardrobe
 
     void InstallConsole()
     {
-        // 每个别名占用一个保留槽位，共用同一个参数解析与执行入口。
+        // 引擎每个槽位支持长名和短名，三个入口只需两个槽位。
         auto* table = RE::SCRIPT_FUNCTION::GetFirstConsoleCommand();
         std::vector<RE::SCRIPT_FUNCTION*> slots;
         for (std::uint32_t i = 0; i < RE::SCRIPT_FUNCTION::Commands::kConsoleCommandsEnd; ++i)
@@ -43,10 +43,14 @@ namespace Wardrobe
             if (table[i].functionName && Normalize(table[i].functionName).starts_with("unused"))
                 slots.push_back(&table[i]);
         }
-        // 某些版本保留槽不足时，兼容一个遗留调试命令。
-        auto* debugSlot = RE::SCRIPT_FUNCTION::LocateConsoleCommand("SetDebugText");
-        if (slots.size() < 3 && debugSlot && std::find(slots.begin(), slots.end(), debugSlot) == slots.end())
-            slots.push_back(debugSlot);
+        // SE 1.5.97 没有 Unused 控制台槽，回退到遗留调试命令。
+        for (const char* name : { "SetDebugText", "SetTargetFalloff" })
+        {
+            if (slots.size() >= 2) break;
+            auto* debugSlot = RE::SCRIPT_FUNCTION::LocateConsoleCommand(name);
+            if (debugSlot && std::find(slots.begin(), slots.end(), debugSlot) == slots.end())
+                slots.push_back(debugSlot);
+        }
         if (slots.empty())
         {
             SKSE::log::error("No reserved console command slot is available"); return;
@@ -58,20 +62,23 @@ namespace Wardrobe
             SKSE::log::error("Cannot find a console string-parameter compiler"); return;
         }
 
-        constexpr std::array<const char*, 3> aliases{ "wardrobe", "wa", "sa" };
+        constexpr std::array<const char*, 2> aliases{ "wardrobe", "wa" };
+        // sw 与现有命令冲突；无短名时使用空字符串，供引擎安全比较。
+        constexpr std::array<const char*, 2> shortNames{ "", "sa" };
         for (std::size_t i = 0; i < std::min(slots.size(), aliases.size()); ++i)
         {
             auto replacement = *slots[i];
             replacement.functionName = aliases[i];
-            replacement.shortName = i == 0 ? "sw" : nullptr;
+            replacement.shortName = shortNames[i];
             replacement.helpString = "SkyWardrobe: [open|close|reload|clear|preset \"name\"]";
             replacement.referenceFunction = false;
             replacement.executeFunction = Execute;
             replacement.compileFunction = donor->compileFunction;
             replacement.conditionFunction = nullptr;
             replacement.SetParameters(parameters);
+            const auto* originalName = slots[i]->functionName;
             REL::safe_write(reinterpret_cast<std::uintptr_t>(slots[i]), &replacement, sizeof(replacement));
-            SKSE::log::info("Registered console command {}", aliases[i]);
+            SKSE::log::info("Registered console command {} (short name: '{}') in slot {}", aliases[i], shortNames[i], originalName);
         }
         if (slots.size() < aliases.size())
             SKSE::log::warn("Only registered {} of {} wardrobe console aliases", slots.size(), aliases.size());
