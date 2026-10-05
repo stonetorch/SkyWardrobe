@@ -1,0 +1,53 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "toolset": "v143,version=14.44.35207",
+      "toolchainFile": "${sourceDir}/extern/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md",
+        "CMAKE_VS_GLOBALS": "VCToolsVersion=14.44.35207",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL",
+        "ENABLE_SKYRIM_SE": "ON",
+        "ENABLE_SKYRIM_AE": "ON",
+        "ENABLE_SKYRIM_VR": "OFF",
+
+        "CAF_UI_LANGUAGE": "zh-CN",
+
+        "AUTO_DEPLOY": "ON",
+        "DEPLOY_ROOT": "D:/Tes5/JueLunV4/Mod Organizer 2/mods/SkyWardrobe"
+      }
+    },
+    {
+      "name": "vs2022",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build/vs2022"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "vs2022",
+      "configuration": "Debug",
+      "jobs": 16
+    },
+    {
+      "name": "release",
+      "configurePreset": "vs2022",
+      "configuration": "Release",
+      "jobs": 16
+    },
+    {
+      "name": "deploy",
+      "configurePreset": "vs2022",
+      "configuration": "Release",
+      "targets": ["deploy"],
+      "jobs": 16
+    }
+  ]
+}

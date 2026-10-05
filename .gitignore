@@ -1,0 +1,6 @@
+/build/
+/vcpkg_installed/
+/extern/
+/cmake-build-*/
+/.idea/
+/.codex/

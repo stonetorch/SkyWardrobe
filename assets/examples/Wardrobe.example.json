@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "pluginCategories": {
+    "ExampleClothes.esp": {
+      "enabled": true,
+      "alias": "示例服装",
+      "search": ["shi li fu zhuang", "example"]
+    }
+  },
+  "categories": {
+    "dress": {"name": "裙装", "search": ["qun zhuang", "dress"]},
+    "smp": {"name": "SMP", "search": ["physics"]}
+  },
+  "items": {
+    "ExampleClothes.esp|000ABC": {
+      "alias": "黑色连衣裙",
+      "note": "短款，带 SMP",
+      "search": ["hei se lian yi qun", "black dress"],
+      "categories": ["dress", "smp"],
+      "favorite": true,
+      "part": "body"
+    }
+  },
+  "presets": {
+    "city-black": {
+      "name": "城市黑色套装",
+      "search": ["cheng shi hei se"],
+      "items": ["ExampleClothes.esp|000ABC"]
+    }
+  },
+  "partNames": {"custom1": "尾巴", "custom2": "耳环"},
+  "workingItems": [],
+  "activePreset": "",
+  "viewOptions": {"byPart": true, "automatic": true, "columns": 7}
+}

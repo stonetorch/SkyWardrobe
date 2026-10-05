@@ -1,0 +1,17 @@
+{
+  "plugin": "ExampleClothes.esp",
+  "items": {
+    "000ABC": {
+      "name": "裙子",
+      "pinyin": "qun zi",
+      "aliases": ["黑裙", "dress"],
+      "note": "中文备注",
+      "part": "body"
+    },
+    "000DEF": {
+      "name": "白色丝袜",
+      "pinyin": "bai se si wa",
+      "part": "stockings"
+    }
+  }
+}
