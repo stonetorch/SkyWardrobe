@@ -13,6 +13,7 @@ namespace Wardrobe
     {
         store.database["workingItems"] = working;
         store.database["activePreset"] = activePreset;
+        ++revision;
         if (!store.writable) { status = store.error; return; }
         // 穿脱不改变搜索元数据；连续操作只保留最新待写状态，避免全目录重建。
         workingSaveQueued_ = true;
@@ -89,6 +90,7 @@ namespace Wardrobe
         {
             working = store.database["workingItems"].get<std::vector<std::string>>();
             activePreset = store.database["activePreset"].get<std::string>();
+            presetBaseline_ = working;
             undo_ = nullptr;
             status = "JSON loaded";
             RebuildIndex();
@@ -174,7 +176,7 @@ namespace Wardrobe
             for (const auto& [key, pinyin] : entry.searchKeys) CachePinyinSearch(key, pinyin);
         }
         // 侧栏与预设也提前建立索引，未被服装引用的分类同样支持自动拼音。
-        for (const char* collection : {"categories", "pluginCategories", "presets"})
+        for (const char* collection : {"categories", "pluginCategories", "presets", "groups"})
             for (const auto& [id, metadata] : store.database[collection].items())
             {
                 CachePinyinSearch(id);
@@ -204,7 +206,7 @@ namespace Wardrobe
     bool Service::Dirty() const
     {
         return !activePreset.empty() && store.database["presets"].contains(activePreset) &&
-            store.database["presets"][activePreset].value("items", std::vector<std::string>{}) != working;
+            presetBaseline_ != working;
     }
 
     void Service::Add(std::string key)
@@ -225,10 +227,91 @@ namespace Wardrobe
         if (livePreview) Apply();
     }
 
+    const Json* Service::Group(const std::string& id) const
+    {
+        const auto [collection, key] = SplitGroupID(id);
+        if (collection.empty() || !store.database[collection].contains(key)) return nullptr;
+        return &store.database[collection][key];
+    }
+
+    bool Service::InGroup(const ClothingEntry& entry, const std::string& id) const
+    {
+        const auto* group = Group(id);
+        if (!group) return false;
+        const auto [collection, key] = SplitGroupID(id);
+        if (collection == "pluginCategories") return Normalize(entry.plugin) == Normalize(key);
+        const auto members = collection == "categories"
+            ? entry.metadata.value("categories", std::vector<std::string>{})
+            : group->value("items", std::vector<std::string>{});
+        return std::find(members.begin(), members.end(), collection == "categories" ? key : entry.key) != members.end();
+    }
+
+    void Service::SetGroupItem(const std::string& id, const ClothingEntry& entry, bool included)
+    {
+        if (!store.writable || !Group(id)) return;
+        const auto [collection, key] = SplitGroupID(id);
+        if (collection == "pluginCategories") return;
+        auto values = collection == "categories" ? entry.metadata.value("categories", std::vector<std::string>{})
+            : store.database[collection][key].value("items", std::vector<std::string>{});
+        const auto member = collection == "categories" ? key : entry.key;
+        std::erase(values, member);
+        if (included) values.push_back(member);
+        if (collection == "categories")
+        {
+            auto& item = store.database["items"][entry.key];
+            if (!item.is_object()) item = Json::object();
+            item["categories"] = values;
+        }
+        else store.database[collection][key]["items"] = values;
+        Save();
+    }
+
+    void Service::UseGroup(const std::string& id, bool apply)
+    {
+        if (!Group(id)) { status = "Group not found: " + id; return; }
+        std::vector<std::pair<std::string, std::uint32_t>> candidates;
+        // 引用仅用于导航，绝不递归收集引用组的服装。
+        for (const auto& entry : catalog) if (InGroup(entry, id)) candidates.emplace_back(entry.key, entry.slots);
+        static std::mt19937 generator(std::random_device{}());
+        working = RandomOutfit(std::move(candidates), generator);
+        activePreset.clear();
+        ++revision;
+        SaveWorking();
+        if (apply) Apply();
+    }
+
+    std::string Service::CreateSubgroup(const std::string& parent)
+    {
+        const auto* group = Group(parent);
+        if (!store.writable || !group) return {};
+        const auto [collection, key] = SplitGroupID(parent);
+        const auto alias = group->value("alias", "");
+        const auto name = alias.empty() ? group->value("name", key) : alias;
+        std::string id;
+        for (std::uint64_t number = 1;; ++number)
+        {
+            id = name + "-" + std::to_string(number);
+            bool exists = store.database["groups"].contains(id);
+            for (const char* field : {"groups", "categories", "pluginCategories"})
+                for (const auto& [otherID, metadata] : store.database[field].items())
+                    exists |= metadata.value("name", otherID) == id || metadata.value("alias", "") == id;
+            if (!exists) break;
+        }
+        store.database["groups"][id] = {{"name", id}, {"items", Json::array()}, {"references", {parent}}};
+        auto refs = store.database[collection][key].value("references", std::vector<std::string>{});
+        refs.push_back("groups:" + id);
+        store.database[collection][key]["references"] = refs;
+        Save();
+        return "groups:" + id;
+    }
+
     void Service::SelectPreset(const std::string& id)
     {
         if (!store.database["presets"].contains(id)) return;
-        working = store.database["presets"][id].value("items", std::vector<std::string>{});
+        const auto group = store.database["presets"][id].value("group", "");
+        if (!Group(group)) { status = "Group not found: " + group; return; }
+        UseGroup(group, false);
+        presetBaseline_ = working;
         activePreset = id; SaveWorking();
         if (livePreview) Apply();
     }
@@ -238,12 +321,24 @@ namespace Wardrobe
         if (activePreset.empty() || !store.database["presets"].contains(activePreset)) return;
         undoPreset_ = activePreset;
         undo_ = store.database["presets"][activePreset];
+        const auto [collection, key] = SplitGroupID(store.database["presets"][activePreset].value("group", ""));
+        if (collection != "groups" || !store.database[collection].contains(key)) { undo_ = nullptr; return; }
+        undoGroupID_ = "groups:" + key;
+        undoGroup_ = store.database[collection][key];
+        store.database[collection][key]["items"] = working;
+        presetBaseline_ = working;
         store.database["presets"][activePreset]["items"] = working; Save();
     }
 
     void Service::UndoOverwrite()
     {
-        if (!undo_.is_null()) { store.database["presets"][undoPreset_] = undo_; undo_ = nullptr; Save(); }
+        if (!undo_.is_null())
+        {
+            const auto [collection, key] = SplitGroupID(undoGroupID_);
+            if (!collection.empty() && store.database[collection].contains(key)) store.database[collection][key] = undoGroup_;
+            if (store.database["presets"].contains(undoPreset_)) store.database["presets"][undoPreset_] = undo_;
+            undo_ = nullptr; Save();
+        }
     }
 
     void Service::Apply(bool clear)

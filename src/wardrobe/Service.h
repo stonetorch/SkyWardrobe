@@ -26,6 +26,11 @@ namespace Wardrobe
         void Apply(bool clear = false);
         void Add(std::string key);
         void Remove(std::string_view key);
+        const Json* Group(const std::string& id) const;
+        bool InGroup(const ClothingEntry& entry, const std::string& id) const;
+        void SetGroupItem(const std::string& id, const ClothingEntry& entry, bool included);
+        void UseGroup(const std::string& id, bool apply = true);
+        std::string CreateSubgroup(const std::string& parent);
         void SelectPreset(const std::string& id);
         void OverwritePreset();
         void UndoOverwrite();
@@ -52,6 +57,9 @@ namespace Wardrobe
         std::future<std::string> pendingSave_;
         bool workingSaveQueued_ = false;
         Json undo_;
+        Json undoGroup_;
+        std::string undoGroupID_;
+        std::vector<std::string> presetBaseline_;
         std::string undoPreset_;
     };
     void InstallConsole();

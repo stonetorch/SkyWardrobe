@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <format>
 #include <optional>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -103,22 +104,22 @@ namespace Wardrobe
     inline Json EmptyDatabase()
     {
         return Json{ {"schemaVersion", 1}, {"items", Json::object()}, {"categories", Json::object()},
-            {"pluginCategories", Json::object()}, {"presets", Json::object()}, {"workingItems", Json::array()}, {"activePreset", ""} };
+            {"groups", Json::object()}, {"pluginCategories", Json::object()}, {"presets", Json::object()}, {"workingItems", Json::array()}, {"activePreset", ""} };
     }
 
     inline void ValidateDatabase(Json& database)
     {
         if (!database.is_object() || database.value("schemaVersion", 1) != 1) throw std::runtime_error("Unsupported wardrobe schema");
-        for (const char* field : {"items", "categories", "pluginCategories", "presets"})
+        for (const char* field : {"items", "categories", "pluginCategories", "presets", "groups"})
         {
             if (!database.contains(field)) database[field] = Json::object();
             if (!database[field].is_object()) throw std::runtime_error(std::string(field) + " must be an object");
             for (const auto& entry : database[field])
             {
                 if (!entry.is_object()) throw std::runtime_error(std::string(field) + " entry must be an object");
-                for (const char* key : {"alias", "name", "note", "pinyin", "part"})
+                for (const char* key : {"alias", "name", "note", "pinyin", "part", "group"})
                     if (entry.contains(key) && !entry[key].is_string()) throw std::runtime_error(std::string(key) + " must be a string");
-                for (const char* key : {"search", "aliases", "categories", "items"})
+                for (const char* key : {"search", "aliases", "categories", "items", "references"})
                     if (entry.contains(key))
                     {
                         if (!entry[key].is_array()) throw std::runtime_error(std::string(key) + " must be an array");
@@ -160,6 +161,23 @@ namespace Wardrobe
             if (!preset.contains("items")) preset["items"] = Json::array();
             canonicalList(preset["items"]);
         }
+        for (auto& group : database["groups"])
+        {
+            if (!group.contains("items")) group["items"] = Json::array();
+            canonicalList(group["items"]);
+        }
+        // 旧预设只迁移成员集合，物品元数据始终保留在全局 items 中。
+        for (auto& [id, preset] : database["presets"].items())
+        {
+            if (!preset.contains("group"))
+            {
+                auto groupID = "preset-" + id;
+                while (database["groups"].contains(groupID)) groupID += "-1";
+                database["groups"][groupID] = preset;
+                database["groups"][groupID].erase("group");
+                preset["group"] = "groups:" + groupID;
+            }
+        }
         if (database.contains("partNames"))
         {
             if (!database["partNames"].is_object()) throw std::runtime_error("partNames must be an object");
@@ -175,4 +193,29 @@ namespace Wardrobe
                 throw std::runtime_error("columns must be between 1 and 12");
         }
     }
+    inline std::pair<std::string, std::string> SplitGroupID(std::string_view key)
+    {
+        const auto split = key.find(':');
+        if (split == std::string_view::npos) return {};
+        auto collection = std::string(key.substr(0, split));
+        if (collection != "groups" && collection != "categories" && collection != "pluginCategories") return {};
+        return {collection, std::string(key.substr(split + 1))};
+    }
+
+    template<class Generator>
+    std::vector<std::string> RandomOutfit(std::vector<std::pair<std::string, std::uint32_t>> candidates, Generator& generator)
+    {
+        // 随机顺序贪心选择，真实 biped 槽位互斥；零槽位物品仍可加入。
+        std::shuffle(candidates.begin(), candidates.end(), generator);
+        std::uint32_t occupied = 0;
+        std::vector<std::string> result;
+        for (const auto& [key, slots] : candidates)
+            if (!(occupied & slots) && std::find(result.begin(), result.end(), key) == result.end())
+            {
+                occupied |= slots;
+                result.push_back(key);
+            }
+        return result;
+    }
+
 }

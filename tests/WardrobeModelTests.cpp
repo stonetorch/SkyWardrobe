@@ -39,6 +39,32 @@ int main()
         AllocateLanes(groups, 8, false);
         Require(groups[0].lanes == 1, "Manual lanes");
 
+        Json legacy = EmptyDatabase();
+        legacy.erase("groups");
+        legacy["items"]["Clothes.esp|000ABC"] = {{"alias", "共享别名"}, {"note", "共享备注"}, {"part", "top"}, {"categories", {"city"}}};
+        legacy["presets"]["city"] = {{"name", "城市"}, {"items", {"Clothes.esp|abc", "Clothes.esp|000ABC"}}};
+        ValidateDatabase(legacy);
+        const auto groupID = legacy["presets"]["city"]["group"].get<std::string>();
+        const auto [collection, id] = SplitGroupID(groupID);
+        Require(collection == "groups" && legacy[collection][id]["items"].size() == 1, "Legacy preset group migration and canonicalization");
+        const auto migrated = legacy;
+        ValidateDatabase(legacy);
+        Require(legacy == migrated, "Migration is idempotent");
+        Require(legacy["items"]["Clothes.esp|000ABC"]["alias"] == "共享别名", "Migration preserves global metadata");
+        Require(SplitGroupID("pluginCategories:Clothes.esp").second == "Clothes.esp", "Plugin group identity");
+        Require(SplitGroupID("items:bad").first.empty(), "Invalid group kind");
+        std::mt19937 random(42);
+        bool firstSeen = false, secondSeen = false;
+        for (int i = 0; i < 100; ++i)
+        {
+            const auto outfit = RandomOutfit({{"a", 1}, {"b", 1}, {"c", 2}, {"d", 0}}, random);
+            Require(outfit.size() == 3, "Random outfit excludes overlapping slots and includes independent slots");
+            firstSeen |= std::find(outfit.begin(), outfit.end(), "a") != outfit.end();
+            secondSeen |= std::find(outfit.begin(), outfit.end(), "b") != outfit.end();
+        }
+        Require(firstSeen && secondSeen, "Random selection reaches both conflicting alternatives");
+        Require(RandomOutfit({}, random).empty(), "Empty group produces empty outfit");
+
         std::filesystem::create_directories(root / "AliasPacks");
         {
             std::ofstream output(root / "AliasPacks" / "test.json", std::ios::binary);
