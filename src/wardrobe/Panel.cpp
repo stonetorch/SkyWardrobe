@@ -90,12 +90,25 @@ namespace Wardrobe
             return name.empty() ? id : name;
         }
 
+        // 标签独占一行，输入框只使用当前可用宽度，避免长中文标签被窗口右边缘裁切。
+        bool EditText(const char* label, std::string& value, float height = 0.0f)
+        {
+            ImGui::PushID(label);
+            ImGui::TextWrapped("%s", label);
+            ImGui::SetNextItemWidth(-1.0f);
+            const bool changed = height > 0.0f
+                ? ImGui::InputTextMultiline("##value", &value, ImVec2(-1.0f, height))
+                : ImGui::InputText("##value", &value);
+            ImGui::PopID();
+            return changed;
+        }
+
         void StartEdit(const ClothingEntry& entry)
         {
             auto& service = Service::Get();
             const auto metadata = entry.metadata;
             editItem = entry.key;
-            editAlias = metadata.value("alias", "");
+            editAlias = service.Name(entry);
             editNote = metadata.value("note", "");
             editSearch = Join(metadata.value("search", Json::array()));
             if (metadata.contains("pinyin")) editSearch += (editSearch.empty() ? "" : "\n") + metadata["pinyin"].get<std::string>();
@@ -112,9 +125,9 @@ namespace Wardrobe
             if (!ImGui::BeginPopupModal(Tr("Item editor", "服装信息"), nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
             auto& service = Service::Get();
             ImGui::TextUnformatted(editItem.c_str());
-            ImGui::InputText(Tr("Alias", "别名"), &editAlias);
-            ImGui::InputTextMultiline(Tr("Note", "备注"), &editNote, ImVec2(-1, 70));
-            ImGui::InputTextMultiline(Tr("Search keys / pinyin (one per line)", "搜索词 / 拼音（每行一个）"), &editSearch, ImVec2(-1, 75));
+            EditText(Tr("Alias", "别名"), editAlias);
+            EditText(Tr("Note", "备注"), editNote, 70);
+            EditText(Tr("Search keys / pinyin (one per line)", "搜索词 / 拼音（每行一个）"), editSearch, 75);
             ImGui::Checkbox(Tr("Favorite", "收藏"), &editFavorite);
             if (ImGui::BeginCombo(Tr("Part", "部件"), PartName(editPart).c_str()))
             {
@@ -182,7 +195,12 @@ namespace Wardrobe
             draw->AddText(ImGui::GetFont(), font * 0.7f, ImVec2(position.x + 9, position.y + font * 2.6f),
                 ImGui::GetColorU32(ImGuiCol_TextDisabled), part.c_str());
             draw->PopClipRect();
-            if (clicked) service.Add(entry.key);
+            // 双击的第二次点击只应用搭配，避免把第一次选中的服装再次移除。
+            if (clicked && !ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            {
+                if (selected) service.Remove(entry.key);
+                else service.Add(entry.key);
+            }
             if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) service.Apply();
             if (hovered)
             {
@@ -426,8 +444,8 @@ namespace Wardrobe
             }
             ImGui::EndDisabled();
             ImGui::Separator();
-            ImGui::InputText(Tr("Preset name", "预设名称"), &presetName);
-            ImGui::InputTextMultiline(Tr("Preset search keys", "预设搜索词（每行一个）"), &presetKeys, ImVec2(-1, 65));
+            EditText(Tr("Preset name", "预设名称"), presetName);
+            EditText(Tr("Preset search keys", "预设搜索词（每行一个）"), presetKeys, 65);
             ImGui::BeginDisabled(!service.store.writable || presetName.empty());
             if (ImGui::Button(Tr("Save working outfit as new", "将工作搭配保存为新预设")))
             {
@@ -460,9 +478,9 @@ namespace Wardrobe
             ImGui::BeginDisabled(!service.store.writable);
             if (ImGui::CollapsingHeader(Tr("Categories", "分类管理"), ImGuiTreeNodeFlags_DefaultOpen))
             {
-                ImGui::InputText(Tr("ID (stable)", "分类 ID（稳定标识）"), &categoryID);
-                ImGui::InputText(Tr("Name", "名称"), &categoryName);
-                ImGui::InputTextMultiline(Tr("Search keys", "搜索词（每行一个）"), &categorySearch, ImVec2(-1, 65));
+                EditText(Tr("ID (stable)", "分类 ID（稳定标识）"), categoryID);
+                EditText(Tr("Name", "名称"), categoryName);
+                EditText(Tr("Search keys", "搜索词（每行一个）"), categorySearch, 65);
                 if (ImGui::Button(Tr("Create / update category", "创建 / 更新分类")) && !categoryName.empty())
                 {
                     if (categoryID.empty()) categoryID = NewID(database["categories"], "category-");
@@ -513,14 +531,17 @@ namespace Wardrobe
                     {
                         selectedPlugin = plugin;
                         const auto metadata = database["pluginCategories"].value(plugin, Json::object());
-                        pluginAlias = metadata.value("alias", ""); pluginKeys = Join(metadata.value("search", Json::array()));
+                        pluginAlias = metadata.value("alias", "");
+                        // 已有别名优先；尚未命名时用插件原名作为可编辑的初始值。
+                        if (pluginAlias.empty()) pluginAlias = plugin;
+                        pluginKeys = Join(metadata.value("search", Json::array()));
                     }
                     ImGui::PopID();
                 }
                 ImGui::EndChild();
                 ImGui::TextUnformatted(selectedPlugin.c_str());
-                ImGui::InputText(Tr("Plugin alias", "插件别名"), &pluginAlias);
-                ImGui::InputTextMultiline(Tr("Plugin search keys", "插件搜索词（每行一个）"), &pluginKeys, ImVec2(-1, 65));
+                EditText(Tr("Plugin alias", "插件别名"), pluginAlias);
+                EditText(Tr("Plugin search keys", "插件搜索词（每行一个）"), pluginKeys, 65);
                 if (ImGui::Button(Tr("Save plugin metadata", "保存插件信息")) && !selectedPlugin.empty())
                 {
                     auto& metadata = database["pluginCategories"][selectedPlugin]; if (!metadata.is_object()) metadata = Json::object();
@@ -532,7 +553,7 @@ namespace Wardrobe
                 for (int i = 15; i < 23; ++i)
                 {
                     auto name = PartName(i);
-                    if (ImGui::InputText(PartLabel(i), &name)) { database["partNames"][PartIDs[i]] = name; service.Save(); }
+                    if (EditText(PartLabel(i), name)) { database["partNames"][PartIDs[i]] = name; service.Save(); }
                 }
             }
             ImGui::EndDisabled();
