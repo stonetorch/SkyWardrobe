@@ -1,6 +1,7 @@
 #pragma once
 #include "wardrobe/Store.h"
 #include <mutex>
+#include <future>
 
 namespace Wardrobe
 {
@@ -18,6 +19,8 @@ namespace Wardrobe
     {
     public:
         static Service& Get();
+        ~Service();
+        void PollSave();
         void Initialize();
         void Reload();
         void Apply(bool clear = false);
@@ -43,6 +46,10 @@ namespace Wardrobe
         std::uint64_t revision{};
     private:
         void RebuildIndex();
+        void SaveWorking();
+        void FlushWorkingSave();
+        std::future<std::string> pendingSave_;
+        bool workingSaveQueued_ = false;
         Json undo_;
         std::string undoPreset_;
     };

@@ -572,6 +572,7 @@ namespace Wardrobe
 
     void ProcessUiRequests()
     {
+        Service::Get().PollSave();
         std::vector<std::pair<std::string, std::string>> pending;
         { std::lock_guard lock(commandMutex); pending.swap(commands); }
         auto& service = Service::Get();

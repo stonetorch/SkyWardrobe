@@ -1,6 +1,7 @@
 #include "wardrobe/Store.h"
 #include <Windows.h>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <stdexcept>
 
@@ -54,6 +55,20 @@ int main()
         Require(store.Load(), "UTF-8 roundtrip load");
         Require(store.Effective("Clothes.esp|000ABC").value("alias", "") == "用户裙子", "User precedence");
         Require(store.Save() && std::filesystem::exists(root / "Wardrobe.json.bak"), "Backup preserved");
+        auto snapshot = store.database;
+        snapshot["workingItems"] = {"Clothes.esp|000ABC"};
+        auto pending = std::async(std::launch::async, [&store, snapshot]() { return store.SaveSnapshot(snapshot); });
+        store.database["workingItems"] = Json::array();
+        Require(pending.get().empty(), "Background snapshot save");
+        Require(store.database["workingItems"].empty(), "Snapshot writer leaves live database untouched");
+        MetadataStore readback(root);
+        Require(readback.Load() && readback.database["workingItems"] == snapshot["workingItems"], "Snapshot persisted independently");
+        Require(store.SaveSnapshot(store.database).empty(), "Latest snapshot save");
+        Require(readback.Load() && readback.database["workingItems"].empty(), "Latest snapshot wins");
+        auto invalidSnapshot = store.database;
+        invalidSnapshot["viewOptions"] = {{"columns", 100}};
+        Require(!store.SaveSnapshot(invalidSnapshot).empty(), "Snapshot validation error reported");
+        Require(readback.Load() && readback.database["workingItems"].empty(), "Failed snapshot retains valid file");
         {
             std::ofstream corrupt(root / "Wardrobe.json"); corrupt << "{broken";
         }

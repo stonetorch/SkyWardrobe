@@ -11,6 +11,7 @@ namespace Wardrobe
         explicit MetadataStore(std::filesystem::path root) : root_(std::move(root)) {}
         bool Load();
         bool Save();
+        std::string SaveSnapshot(Json snapshot) const;
         Json Effective(std::string_view key) const;
         Json database = EmptyDatabase();
         std::string error;

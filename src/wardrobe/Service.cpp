@@ -7,6 +7,57 @@ namespace Wardrobe
 {
     Service& Service::Get() { static Service service; return service; }
 
+    Service::~Service() { FlushWorkingSave(); }
+
+    void Service::SaveWorking()
+    {
+        store.database["workingItems"] = working;
+        store.database["activePreset"] = activePreset;
+        if (!store.writable) { status = store.error; return; }
+        // 穿脱不改变搜索元数据；连续操作只保留最新待写状态，避免全目录重建。
+        workingSaveQueued_ = true;
+        status = "Saving";
+        PollSave();
+    }
+
+    void Service::PollSave()
+    {
+        if (pendingSave_.valid())
+        {
+            if (pendingSave_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+            try { store.error = pendingSave_.get(); }
+            catch (const std::exception& e) { store.error = e.what(); }
+            status = store.error.empty() ? "Saved" : store.error;
+        }
+        if (!workingSaveQueued_) return;
+        try
+        {
+            // 同一时刻只有一个写入者，旧快照完成后才提交最新快照。
+            pendingSave_ = std::async(std::launch::async, [this, snapshot = store.database]() mutable
+            {
+                return store.SaveSnapshot(std::move(snapshot));
+            });
+            workingSaveQueued_ = false;
+            status = "Saving";
+        }
+        catch (const std::exception& e)
+        {
+            workingSaveQueued_ = false;
+            store.error = e.what();
+            status = store.error;
+        }
+    }
+
+    void Service::FlushWorkingSave()
+    {
+        // 显式保存、重载和退出必须先排空后台写入，防止旧快照覆盖新数据。
+        while (pendingSave_.valid() || workingSaveQueued_)
+        {
+            if (pendingSave_.valid()) pendingSave_.wait();
+            PollSave();
+        }
+    }
+
     void Service::Initialize()
     {
         if (InitializePinyinSearch("Data/SKSE/Plugins/SkyWardrobe/dict"))
@@ -33,6 +84,7 @@ namespace Wardrobe
 
     void Service::Reload()
     {
+        FlushWorkingSave();
         if (store.Load())
         {
             working = store.database["workingItems"].get<std::vector<std::string>>();
@@ -46,6 +98,7 @@ namespace Wardrobe
 
     bool Service::Save()
     {
+        FlushWorkingSave();
         store.database["workingItems"] = working;
         store.database["activePreset"] = activePreset;
         RebuildIndex();
@@ -144,13 +197,14 @@ namespace Wardrobe
         // 外观覆盖遵从真实 biped 冲突；替换冲突项时只修改工作搭配，不改已保存预设。
         std::erase_if(working, [&](const auto& item) { const auto* other = Find(item); return other && (entry->slots & other->slots) != 0; });
         working.push_back(std::move(key));
-        Save();
+        SaveWorking();
         if (livePreview) Apply();
     }
 
     void Service::Remove(std::string_view key)
     {
-        std::erase(working, std::string(key)); Save();
+        if (std::erase(working, std::string(key)) == 0) return;
+        SaveWorking();
         if (livePreview) Apply();
     }
 
@@ -158,7 +212,7 @@ namespace Wardrobe
     {
         if (!store.database["presets"].contains(id)) return;
         working = store.database["presets"][id].value("items", std::vector<std::string>{});
-        activePreset = id; Save();
+        activePreset = id; SaveWorking();
         if (livePreview) Apply();
     }
 

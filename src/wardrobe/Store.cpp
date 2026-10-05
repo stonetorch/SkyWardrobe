@@ -89,6 +89,15 @@ namespace Wardrobe
         catch (const std::exception& e) { error = e.what(); return false; }
     }
 
+    std::string MetadataStore::SaveSnapshot(Json snapshot) const
+    {
+        // 后台只操作独立快照，不读写界面正在修改的数据库和错误状态。
+        MetadataStore writer(root_);
+        writer.database = std::move(snapshot);
+        writer.Save();
+        return writer.error;
+    }
+
     Json MetadataStore::Effective(std::string_view key) const
     {
         const std::string id(key);
