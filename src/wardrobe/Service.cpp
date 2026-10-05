@@ -9,6 +9,10 @@ namespace Wardrobe
 
     void Service::Initialize()
     {
+        if (InitializePinyinSearch("Data/SKSE/Plugins/SkyWardrobe/dict"))
+            SKSE::log::info("Automatic pinyin search initialized");
+        else
+            SKSE::log::warn("Pinyin dictionary unavailable; using original text and manual search keys");
         catalog.clear(); plugins.clear();
         auto* data = RE::TESDataHandler::GetSingleton();
         if (!data) return;
@@ -63,6 +67,7 @@ namespace Wardrobe
 
     void Service::RebuildIndex()
     {
+        ClearPinyinSearchCache();
         ++revision;
         for (auto& entry : catalog)
         {
@@ -95,7 +100,21 @@ namespace Wardrobe
                 entry.searchKeys.emplace_back(category, false);
                 if (store.database["categories"].contains(category)) addMetadata(store.database["categories"][category]);
             }
+            // 重建目录时预先转换中文，查询和面板重绘只读取缓存。
+            for (const auto& [key, pinyin] : entry.searchKeys) CachePinyinSearch(key, pinyin);
         }
+        // 侧栏与预设也提前建立索引，未被服装引用的分类同样支持自动拼音。
+        for (const char* collection : {"categories", "pluginCategories", "presets"})
+            for (const auto& [id, metadata] : store.database[collection].items())
+            {
+                CachePinyinSearch(id);
+                for (const char* field : {"name", "alias", "note", "pinyin"})
+                    if (metadata.contains(field) && metadata[field].is_string())
+                        CachePinyinSearch(metadata[field].get<std::string>(), std::string_view(field) == "pinyin");
+                for (const char* field : {"search", "aliases"})
+                    if (metadata.contains(field) && metadata[field].is_array())
+                        for (const auto& key : metadata[field]) if (key.is_string()) CachePinyinSearch(key.get<std::string>(), true);
+            }
     }
 
     std::string Service::Name(const ClothingEntry& entry) const

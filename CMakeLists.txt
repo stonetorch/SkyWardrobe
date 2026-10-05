@@ -20,6 +20,7 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(directxtk CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(minhook CONFIG REQUIRED)
+find_package(cpp-pinyin CONFIG REQUIRED)
 add_subdirectory("${COMMONLIB_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/commonlibsse-ng" EXCLUDE_FROM_ALL)
 include("${COMMONLIB_SOURCE_DIR}/cmake/CommonLibSSE.cmake")
 
@@ -31,6 +32,7 @@ add_commonlibsse_plugin(${PROJECT_NAME}
         src/ui/Overlay.cpp
         src/ui/UiTabs.cpp
         src/wardrobe/Store.cpp
+        src/wardrobe/PinyinSearch.cpp
         src/wardrobe/Service.cpp
         src/wardrobe/SosBackend.cpp
         src/wardrobe/Panel.cpp
@@ -62,7 +64,7 @@ endif()
 # 交给 cl.exe 并行编译插件源文件。
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/MP>)
 target_precompile_headers(${PROJECT_NAME} PRIVATE src/PCH.h)
-target_link_libraries(${PROJECT_NAME} PRIVATE imgui::imgui minhook::minhook d3d11 dxgi)
+target_link_libraries(${PROJECT_NAME} PRIVATE imgui::imgui minhook::minhook cpp-pinyin::cpp-pinyin d3d11 dxgi)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Data/SKSE/Plugins"
@@ -154,3 +156,32 @@ target_compile_features(SkyWardrobeModelTests PRIVATE cxx_std_23)
 target_compile_definitions(SkyWardrobeModelTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(SkyWardrobeModelTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 add_test(NAME SkyWardrobeModelTests COMMAND SkyWardrobeModelTests)
+target_sources(SkyWardrobeModelTests PRIVATE src/wardrobe/PinyinSearch.cpp)
+target_link_libraries(SkyWardrobeModelTests PRIVATE cpp-pinyin::cpp-pinyin)
+
+# 字典随 DLL 和安装包分发，运行时不依赖开发机器上的 vcpkg 路径。
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${cpp-pinyin_DIR}/dict"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/SkyWardrobe/dict"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${cpp-pinyin_DIR}/copyright"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/SkyWardrobe/LICENSE-cpp-pinyin.txt"
+    VERBATIM
+)
+if(AUTO_DEPLOY)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${cpp-pinyin_DIR}/dict"
+                "${_plugin_deploy_dir}/SkyWardrobe/dict"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${cpp-pinyin_DIR}/copyright"
+                "${_plugin_deploy_dir}/SkyWardrobe/LICENSE-cpp-pinyin.txt"
+        VERBATIM
+    )
+endif()
+install(DIRECTORY "${cpp-pinyin_DIR}/dict" DESTINATION "${DEPLOY_ROOT}/SKSE/Plugins/SkyWardrobe")
+install(FILES "${cpp-pinyin_DIR}/copyright" DESTINATION "${DEPLOY_ROOT}/SKSE/Plugins/SkyWardrobe" RENAME "LICENSE-cpp-pinyin.txt")
+
+add_executable(SkyWardrobePinyinSearchTests tests/PinyinSearchTests.cpp src/wardrobe/PinyinSearch.cpp)
+target_include_directories(SkyWardrobePinyinSearchTests PRIVATE src src/third_party)
+target_compile_features(SkyWardrobePinyinSearchTests PRIVATE cxx_std_23)
+target_compile_options(SkyWardrobePinyinSearchTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+target_link_libraries(SkyWardrobePinyinSearchTests PRIVATE cpp-pinyin::cpp-pinyin)
+add_test(NAME SkyWardrobePinyinSearchTests COMMAND SkyWardrobePinyinSearchTests "${cpp-pinyin_DIR}/dict")

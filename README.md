@@ -27,7 +27,7 @@ wardrobe close
 - **注册插件**：在“分类与数据 → 注册插件分类”勾选 ESP / ESM / ESL，分类动态包含其全部来源 ARMO，显示记录数量。覆盖原有 ARMO 的补丁不会把服装移出来源插件分类。
 - **多对多分类**：创建分类，右键服装勾选多个分类；分类可重命名、增加拼音搜索词或删除。
 - **服装卡片**：标题使用别名或原名，备注使用灰色小字号；悬浮显示完整文字、稳定 ID 与 biped mask。右键编辑收藏、别名、中文备注、搜索词、分类与部件。
-- **搜索**：名称、别名、备注、插件、分类和搜索词共同参与匹配。别名包 `pinyin: "qun zi"` 支持 `qun zi`、`qunzi`、`qz`、`qzi`，分类及预设也支持拼音搜索词。中文通过 Ctrl+V 粘贴，批量数据可直接编辑 JSON。
+- **搜索**：名称、别名、备注、插件、分类和搜索词共同参与匹配。中文通过 cpp-pinyin 自动生成全拼及首字母索引，`裙子` 可用 `qun zi`、`qunzi`、`qz`、`qzi`、`qu zi` 搜索，分类及预设同样支持；已有 `pinyin` / `search` 用于人工纠音和扩展搜索词。中文通过 Ctrl+V 粘贴，批量数据可直接编辑 JSON。
 - **语义部件**：全身、上装、下装、内衣、胸衣、内裤、鞋、袜、手套、头饰、头发、项链、披风、配饰与自定义 1–8。自定义部件可以改显示名称。未标记服装按常见 biped 槽位给出初始建议，用户标记始终优先。
 - **部件分列**：只显示当前结果中有服装的部件；列数 1–12 可调。自动分配时把额外列依次分给 `件数 / 已分配列数` 最大的部件。部件多于设置列数时水平滚动，每列保持单一部件。
 - **工作搭配**：单击卡片加入；重复点击保持选中。占用相同 biped 槽位的旧部件会被替换。右侧可移除部件；双击或“应用外观”应用整体搭配。可选实时预览，默认关闭。
@@ -93,6 +93,7 @@ build/vs2022/Data/SKSE/Plugins/Debug/SkyWardrobe.dll
 
 ```powershell
 .\build\vs2022\Debug\SkyWardrobeModelTests.exe
+.\build\vs2022\Debug\SkyWardrobePinyinSearchTests.exe .\build\vs2022\vcpkg_installed\x64-windows-static-md\share\cpp-pinyin\dict
 ```
 
 测试覆盖普通 / ESL 稳定 ID、非法运行时 ID、拼音缩写与顺序、中文匹配、部件分列、别名包与用户覆盖、UTF-8 保存、备份及坏 JSON 保护。游戏内验收清单见 [docs/RuntimeChecks.md](docs/RuntimeChecks.md)。编译与数据测试通过不代表已完成游戏内外观、控制台或鼠标验收。

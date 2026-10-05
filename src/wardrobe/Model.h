@@ -1,6 +1,7 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
+#include "wardrobe/PinyinSearch.h"
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -56,11 +57,7 @@ namespace Wardrobe
         if (haystack == needle) return 100;
         if (haystack.starts_with(needle)) return 90;
         if (haystack.find(needle) != std::string::npos) return 70;
-        if (!pinyin || std::any_of(needle.begin(), needle.end(), [](unsigned char c) { return c >= 128; })) return 0;
-        // 拼音只做有序子序列匹配，qun zi 同时支持 qz、qzi，避免生成指数级缩写组合。
-        std::size_t position = 0;
-        for (char c : haystack) if (position < needle.size() && needle[position] == c) ++position;
-        return position == needle.size() ? 45 : 0;
+        return PinyinSearchScore(needle, value, pinyin);
     }
 
     inline int SearchMetadata(std::string_view query, const Json& metadata)
