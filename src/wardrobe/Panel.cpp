@@ -221,6 +221,40 @@ namespace Wardrobe
             ImGui::EndPopup();
         }
 
+        // 名字区固定占两行高度，卡片整体比单行名字时高一行；行距与高度必须共用同一组常量。
+        constexpr float CardTitleLine = 1.05f;
+        constexpr float CardTextHeight = 3.4f;
+
+        float CardHeight()
+        {
+            return ImGui::GetFontSize() * (CardTextHeight + CardTitleLine);
+        }
+
+        // 逐字符测量 UTF-8 文本，返回能放进 width 的最长前缀末尾；至少推进一个字符，避免调用方死循环。
+        const char* FitPrefix(ImFont* font, float size, const char* begin, const char* end, float width)
+        {
+            const char* fit = begin;
+            for (const char* cursor = begin; cursor < end;)
+            {
+                // 跳过续字节按整字符测量，避免把多字节字符切成乱码。
+                const char* next = cursor + 1;
+                while (next < end && (static_cast<unsigned char>(*next) & 0xC0) == 0x80) ++next;
+                if (fit != begin && font->CalcTextSizeA(size, FLT_MAX, 0.0f, begin, next).x > width) break;
+                fit = cursor = next;
+            }
+            return fit;
+        }
+
+        // 取一行文字：优先在空白处断行，英文单词过长时退回字符级切分，返回值保证大于 begin。
+        const char* WrapTitleLine(ImFont* font, float size, const char* begin, const char* end, float width)
+        {
+            const char* fit = FitPrefix(font, size, begin, end, width);
+            if (fit >= end) return end;
+            const char* space = fit;
+            while (space > begin && space[-1] != ' ' && space[-1] != '\t') --space;
+            return space > begin + 1 ? space - 1 : fit;
+        }
+
         void DrawCard(const ClothingEntry& entry, float width)
         {
             auto& service = Service::Get();
@@ -233,7 +267,7 @@ namespace Wardrobe
             const auto note = metadata.value("note", "");
             ImGui::PushID(entry.key.c_str());
             const auto position = ImGui::GetCursorScreenPos();
-            const float font = ImGui::GetFontSize(), height = font * 3.4f;
+            const float font = ImGui::GetFontSize(), lineHeight = font * CardTitleLine, height = CardHeight();
             const bool clicked = ImGui::InvisibleButton("card", ImVec2(std::max(30.0f, width), height));
             const bool hovered = ImGui::IsItemHovered();
             auto* draw = ImGui::GetWindowDrawList();
@@ -242,13 +276,25 @@ namespace Wardrobe
             if (selected) draw->AddRect(position, end, quickAction == QuickAction::None ? ImGui::GetColorU32(ImGuiCol_CheckMark)
                 : ImGui::GetColorU32(ImVec4(1.0f, 0.65f, 0.15f, 1.0f)), 5, 0, 3);
             draw->PushClipRect(ImVec2(position.x + 7, position.y + 3), ImVec2(end.x - 7, end.y - 3), true);
-            draw->AddText(ImVec2(position.x + 9, position.y + 7), ImGui::GetColorU32(ImGuiCol_Text), title.c_str());
+            // 名字占两行：第一行放不下就换到第二行，第二行仍放不下的部分不绘制，由裁剪区兜底。
+            const float titleWidth = width - 16.0f;
+            const auto* titleBegin = title.c_str();
+            const auto* const titleEnd = titleBegin + title.size();
+            const auto* lineEnd = WrapTitleLine(ImGui::GetFont(), font, titleBegin, titleEnd, titleWidth);
+            draw->AddText(ImVec2(position.x + 9, position.y + 7), ImGui::GetColorU32(ImGuiCol_Text), titleBegin, lineEnd);
+            if (lineEnd < titleEnd)
+            {
+                // 断行后可能留下前导空白，跳过它避免第二行以空格开头。
+                while (lineEnd < titleEnd && (*lineEnd == ' ' || *lineEnd == '\t')) ++lineEnd;
+                draw->AddText(ImVec2(position.x + 9, position.y + 7 + lineHeight), ImGui::GetColorU32(ImGuiCol_Text),
+                    lineEnd, WrapTitleLine(ImGui::GetFont(), font, lineEnd, titleEnd, titleWidth));
+            }
             // 小字号备注独立绘制，不缩放整个窗口；严格裁剪，避免长中文文本穿过相邻卡片。
             const float noteSize = font * Overlay::NoteFont()->LegacySize / ImGui::GetFont()->LegacySize;
-            draw->AddText(Overlay::NoteFont(), noteSize, ImVec2(position.x + 9, position.y + font * 1.6f),
+            draw->AddText(Overlay::NoteFont(), noteSize, ImVec2(position.x + 9, position.y + font * 1.6f + lineHeight),
                 ImGui::GetColorU32(ImGuiCol_TextDisabled), note.c_str());
             const auto part = PartName(service.Part(entry));
-            draw->AddText(ImGui::GetFont(), font * 0.7f, ImVec2(position.x + 9, position.y + font * 2.6f),
+            draw->AddText(ImGui::GetFont(), font * 0.7f, ImVec2(position.x + 9, position.y + font * 2.6f + lineHeight),
                 ImGui::GetColorU32(ImGuiCol_TextDisabled), part.c_str());
             draw->PopClipRect();
             // 双击的第二次点击只应用搭配，避免把第一次选中的服装再次移除。
@@ -570,7 +616,7 @@ namespace Wardrobe
                 if (ImGui::BeginTable("Cards", columns, ImGuiTableFlags_SizingStretchSame))
                 {
                     ImGuiListClipper clipper;
-                    clipper.Begin(static_cast<int>((ranked.size() + columns - 1) / columns), ImGui::GetFontSize() * 3.4f + ImGui::GetStyle().CellPadding.y * 2);
+                    clipper.Begin(static_cast<int>((ranked.size() + columns - 1) / columns), CardHeight() + ImGui::GetStyle().CellPadding.y * 2);
                     while (clipper.Step())
                         for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
                         {
@@ -619,7 +665,7 @@ namespace Wardrobe
                         const auto first = group.items.size() * lane / group.lanes;
                         const auto last = group.items.size() * (lane + 1) / group.lanes;
                         ImGuiListClipper clipper;
-                        clipper.Begin(static_cast<int>(last - first), ImGui::GetFontSize() * 3.4f + ImGui::GetStyle().ItemSpacing.y);
+                        clipper.Begin(static_cast<int>(last - first), CardHeight() + ImGui::GetStyle().ItemSpacing.y);
                         while (clipper.Step()) for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
                             DrawCard(service.catalog[group.items[first + i]], ImGui::GetContentRegionAvail().x);
                         ImGui::EndChild(); ImGui::PopID();
