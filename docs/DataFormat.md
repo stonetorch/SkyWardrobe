@@ -13,6 +13,7 @@
 | presets | object | 键是稳定预设 ID，值含 name、search、items |
 | workingItems | string array | 工作搭配中的稳定 FormKey |
 | activePreset | string | 当前预设 ID，空字符串表示未绑定 |
+| actualEquipmentMode | string | 实际装备模式：off（关闭，默认）、shoes（仅槽位 37 的鞋）、all（全部工作搭配服装） |
 | partNames | object | 自定义部件 ID 到显示名称 |
 | viewOptions | object | byPart、automatic、columns |
 
@@ -31,6 +32,8 @@ custom1 custom2 custom3 custom4 custom5 custom6 custom7 custom8
 ```
 
 biped 槽位掩码只从游戏扫描，语义部件仅用于分类显示。部件修改不会修改 ARMO 槽位。
+
+`actualEquipmentMode` 为全局衣柜设置，不随预设切换；旧 JSON 缺失时自动补为 `off`，非法值拒绝载入。服装实际穿戴通过原版 `ActorEquipManager` 完成，会改变装备属性和效果。临时物品实例与衣柜实际穿戴记录保存在对应存档的 SKSE co-save 中，不写入全局 Wardrobe.json；读档重置旧世界记账，再按该存档恢复并解析 FormID。
 
 ## 别名包
 

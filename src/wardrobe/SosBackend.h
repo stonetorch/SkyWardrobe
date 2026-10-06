@@ -1,4 +1,6 @@
 #pragma once
+#include "wardrobe/ActualEquipmentPlan.h"
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -23,6 +25,8 @@ namespace Wardrobe
         void Reset();
         void Finish(std::uint64_t epoch, std::string message);
         bool Current(std::uint64_t epoch) const;
+        void SetEquipmentMode(ActualEquipmentMode mode);
+        ActualEquipmentMode EquipmentMode() const { return equipmentMode_.load(); }
     private:
         void StartNext();
         mutable std::mutex mutex_;
@@ -30,5 +34,6 @@ namespace Wardrobe
         bool pendingClear_{}, hasPending_{}, busy_{};
         std::uint64_t epoch_{};
         std::string status_ = "SOS idle";
+        std::atomic<ActualEquipmentMode> equipmentMode_{ActualEquipmentMode::Off};
     };
 }

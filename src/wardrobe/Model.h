@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 #include "wardrobe/PinyinSearch.h"
+#include "wardrobe/ActualEquipmentPlan.h"
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -104,7 +105,7 @@ namespace Wardrobe
     inline Json EmptyDatabase()
     {
         return Json{ {"schemaVersion", 1}, {"items", Json::object()}, {"categories", Json::object()},
-            {"groups", Json::object()}, {"pluginCategories", Json::object()}, {"presets", Json::object()}, {"workingItems", Json::array()}, {"activePreset", ""} };
+            {"groups", Json::object()}, {"pluginCategories", Json::object()}, {"presets", Json::object()}, {"workingItems", Json::array()}, {"activePreset", ""}, {"actualEquipmentMode", "off"} };
     }
 
     inline void ValidateDatabase(Json& database)
@@ -134,6 +135,10 @@ namespace Wardrobe
         for (const auto& key : database["workingItems"]) if (!key.is_string()) throw std::runtime_error("workingItems must contain strings");
         if (!database.contains("activePreset")) database["activePreset"] = "";
         if (!database["activePreset"].is_string()) throw std::runtime_error("activePreset must be a string");
+        if (!database.contains("actualEquipmentMode")) database["actualEquipmentMode"] = "off";
+        if (!database["actualEquipmentMode"].is_string() ||
+            (database["actualEquipmentMode"] != "off" && database["actualEquipmentMode"] != "shoes" && database["actualEquipmentMode"] != "all"))
+            throw std::runtime_error("actualEquipmentMode must be off, shoes or all");
         database["schemaVersion"] = 1;
         Json canonicalItems = Json::object();
         for (const auto& [text, metadata] : database["items"].items())

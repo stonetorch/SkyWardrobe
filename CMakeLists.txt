@@ -36,6 +36,7 @@ add_commonlibsse_plugin(${PROJECT_NAME}
         src/wardrobe/PinyinSearch.cpp
         src/wardrobe/Service.cpp
         src/wardrobe/SosBackend.cpp
+        src/wardrobe/ActualEquipment.cpp
         src/wardrobe/Panel.cpp
         src/wardrobe/Console.cpp
     USE_ADDRESS_LIBRARY
@@ -151,6 +152,11 @@ install(FILES ${WARDROBE_EXAMPLES} DESTINATION "${DEPLOY_ROOT}/SKSE/Plugins/SkyW
 
 
 enable_testing()
+add_executable(SkyWardrobeActualEquipmentTests tests/ActualEquipmentTests.cpp)
+target_include_directories(SkyWardrobeActualEquipmentTests PRIVATE src src/third_party)
+target_compile_features(SkyWardrobeActualEquipmentTests PRIVATE cxx_std_23)
+target_compile_options(SkyWardrobeActualEquipmentTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME SkyWardrobeActualEquipmentTests COMMAND SkyWardrobeActualEquipmentTests)
 add_executable(SkyWardrobeInputMethodTests tests/InputMethodTests.cpp)
 target_include_directories(SkyWardrobeInputMethodTests PRIVATE src)
 target_compile_features(SkyWardrobeInputMethodTests PRIVATE cxx_std_23)

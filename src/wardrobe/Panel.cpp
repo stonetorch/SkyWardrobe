@@ -692,6 +692,15 @@ namespace Wardrobe
             if (service.Dirty()) title += " *";
             ImGui::TextWrapped("%s", title.c_str());
             ImGui::Checkbox(Tr("Live preview", "实时预览"), &service.livePreview);
+            const char* equipmentModes[] = {Tr("Off", "关闭"), Tr("Shoes only", "仅鞋子装备"), Tr("Equip all", "全部装备")};
+            auto equipmentMode = static_cast<int>(service.EquipmentMode());
+            ImGui::BeginDisabled(!service.store.writable);
+            if (ImGui::Combo(Tr("Actual equipment", "实际装备"), &equipmentMode, equipmentModes, 3))
+                service.SetEquipmentMode(static_cast<ActualEquipmentMode>(equipmentMode));
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", Tr("Also equip through the game. Changes armor stats and effects; missing items are added automatically. Shoes use slot 37. Enabled modes take effect on the next Apply; Off reclaims temporary items and keeps your existing equipment.",
+                    "同时通过原版路径装备，会改变护甲属性和装备效果；缺少的物品自动添加。鞋子按槽位 37 判断。启用模式下次应用生效；关闭回收临时物品，保留玩家原有物品的当前穿戴。"));
             if (ImGui::Button(Tr("Apply", "应用外观"))) service.Apply();
             ImGui::SameLine(); if (ImGui::Button(Tr("Clear appearance", "清除外观覆盖"))) service.Apply(true);
             ImGui::BeginDisabled(service.activePreset.empty() || !presets.contains(service.activePreset) || !service.store.writable);

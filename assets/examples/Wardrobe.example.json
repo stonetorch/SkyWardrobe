@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "actualEquipmentMode": "off",
   "pluginCategories": {
     "ExampleClothes.esp": {
       "enabled": true,

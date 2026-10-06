@@ -1,5 +1,6 @@
 #include "wardrobe/SosBackend.h"
 #include "wardrobe/Model.h"
+#include "wardrobe/ActualEquipment.h"
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
 #include <functional>
@@ -29,6 +30,7 @@ namespace Wardrobe
         {
             std::uint64_t epoch{};
             std::vector<RE::TESObjectARMO*> armors;
+            std::vector<RE::TESObjectARMO*> actualArmors;
             bool clear{};
             int stage{};
 
@@ -76,6 +78,12 @@ namespace Wardrobe
                     {
                         backend.Finish(epoch, "SOS selected outfit readback failed"); return;
                     }
+                    // SOS 回读成功后才实际穿戴；失败请求不会添加物品或替换玩家装备。
+                    if (!clear)
+                    {
+                        const auto error = ApplyActualEquipment(actualArmors, backend.EquipmentMode());
+                        if (!error.empty()) { backend.Finish(epoch, "SOS appearance refreshed; " + error); return; }
+                    }
                     backend.Finish(epoch, clear ? "SOS appearance cleared" : "SOS appearance refreshed"); return;
                 }
                 auto self = shared_from_this();
@@ -87,6 +95,29 @@ namespace Wardrobe
     }
 
     SosBackend& SosBackend::Get() { static SosBackend backend; return backend; }
+
+    void SosBackend::SetEquipmentMode(ActualEquipmentMode mode)
+    {
+        equipmentMode_.store(mode);
+        if (mode != ActualEquipmentMode::Off) return;
+        std::uint64_t epoch;
+        { std::lock_guard lock(mutex_); epoch = epoch_; }
+        SKSE::GetTaskInterface()->AddTask([this, epoch]
+        {
+            // 旧世界任务和关闭后重新开启的任务都不能清理当前搭配。
+            if (!Current(epoch) || EquipmentMode() != ActualEquipmentMode::Off) return;
+            if (auto* player = RE::PlayerCharacter::GetSingleton(); player && player->Is3DLoaded())
+            {
+                const auto error = ClearTemporaryEquipment();
+                if (!error.empty())
+                {
+                    std::lock_guard lock(mutex_);
+                    status_ = error;
+                    SKSE::log::warn("{}", error);
+                }
+            }
+        });
+    }
 
     void SosBackend::Request(std::vector<std::string> keys, bool clear)
     {
@@ -118,6 +149,13 @@ namespace Wardrobe
             // 缺失模组时拒绝整个应用，避免用户误以为预设已完整展示。
             if (!armor) { Finish(operation->epoch, "Unresolved armor: " + text); return; }
             operation->armors.push_back(armor);
+        }
+        operation->actualArmors = operation->armors;
+        // 清除临时物品独立于 SOS 启用状态；玩家已有服装保留当前穿戴。
+        if (operation->clear)
+        {
+            const auto error = ClearTemporaryEquipment();
+            if (!error.empty()) { Finish(operation->epoch, error); return; }
         }
         operation->Next();
     }

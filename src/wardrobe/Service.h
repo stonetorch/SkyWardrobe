@@ -24,6 +24,8 @@ namespace Wardrobe
         void Initialize();
         void Reload();
         void Apply(bool clear = false);
+        ActualEquipmentMode EquipmentMode() const;
+        void SetEquipmentMode(ActualEquipmentMode mode);
         void Add(std::string key);
         void Remove(std::string_view key);
         const Json* Group(const std::string& id) const;

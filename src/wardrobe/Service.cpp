@@ -97,6 +97,7 @@ namespace Wardrobe
             undo_ = nullptr;
             status = "JSON loaded";
             RebuildIndex();
+            SosBackend::Get().SetEquipmentMode(EquipmentMode());
         }
         else { status = store.error; RebuildIndex(); }
     }
@@ -354,11 +355,29 @@ namespace Wardrobe
         SosBackend::Get().Request(clear ? std::vector<std::string>{} : working, clear);
     }
 
+    ActualEquipmentMode Service::EquipmentMode() const
+    {
+        return ParseActualEquipmentMode(store.database.value("actualEquipmentMode", std::string("off")));
+    }
+
+    void Service::SetEquipmentMode(ActualEquipmentMode mode)
+    {
+        if (!store.writable) return;
+        store.database["actualEquipmentMode"] = ActualEquipmentModeID(mode);
+        SosBackend::Get().SetEquipmentMode(mode);
+        SaveWorking();
+    }
+
     void OnGameMessage(std::uint32_t type)
     {
         if (type == SKSE::MessagingInterface::kPreLoadGame || type == SKSE::MessagingInterface::kNewGame)
         {
             SosBackend::Get().Reset();
+        }
+        if (type == SKSE::MessagingInterface::kPostLoadGame)
+        {
+            // 当前设置为关闭时，读档后也回收该存档中记录的临时物品。
+            SosBackend::Get().SetEquipmentMode(Service::Get().EquipmentMode());
         }
     }
 }

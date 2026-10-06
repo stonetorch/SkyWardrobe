@@ -11,6 +11,7 @@
 #include "ui/Overlay.h"
 #include "ui/InputMethod.h"
 #include "wardrobe/Service.h"
+#include "wardrobe/ActualEquipment.h"
 
 namespace
 {
@@ -43,6 +44,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
         spdlog::default_logger()->flush();
     }
 
+    Wardrobe::RegisterActualEquipmentSerialization();
     const auto* messaging = SKSE::GetMessagingInterface();
     return messaging && messaging->RegisterListener([](SKSE::MessagingInterface::Message* message) {
         Wardrobe::OnGameMessage(message->type);
