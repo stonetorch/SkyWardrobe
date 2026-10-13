@@ -16,6 +16,7 @@
 | actualEquipmentMode | string | 实际装备模式：off（关闭，默认）、shoes（仅槽位 37 的鞋）、all（全部工作搭配服装） |
 | partNames | object | 自定义部件 ID 到显示名称 |
 | viewOptions | object | byPart、automatic、columns |
+| quickAccess | object | 快捷浮窗的 enabled、attached、rows、columns、cellSize、cells |
 
 FormKey 示例：`Clothes.esp|000ABC`；普通 ESP 最多 24 位本地 ID，ESL 实际使用 12 位。不要把加载顺序索引或 `FE123ABC` 写入 JSON。缺失模组时保留字符串，并在应用时给出错误。十六进制保存统一大写与至少六位；重复 FormKey 会去重，但重复的元数据键会报错。
 
@@ -71,3 +72,24 @@ biped 槽位掩码只从游戏扫描，语义部件仅用于分类显示。部�
 预设的 `group` 字段绑定要使用的服装组。旧预设首次加载会自动迁移到独立服装组；原物品元数据和分类保持不变。应用预设或使用服装组会打乱直接成员顺序，选择真实 biped 槽位互不覆盖的服装，再应用结果。每次使用都重新随机；部件标记不参与冲突判定。旧 `items` 字段保留兼容信息，应用以 `group` 为准。
 
 衣柜中分类、注册插件和其他组分段展示。浏览组时可编辑元数据、使用组、创建子组。创建子组扫描不重复名称，建立双向引用，随后在父组中快捷点选成员。快捷添加高亮表示目标组成员，部件标记高亮表示目标部件，移除高亮表示当前组成员；橙色边框与工作搭配高亮区分。快捷状态不会穿脱工作搭配，结束后恢复普通点击。
+
+## 快捷浮窗
+
+打开 `wa` 菜单时默认显示 3 × 3 快捷浮窗，位于主面板右侧；空间不足时尝试左侧，并限制在可见视口内。点击空格子或右键任意格子打开绑定编辑器，选择操作、目标和图标后保存。可设置悬停名称；留空则跟随目标当前名称。浮窗“配置”与主面板“界面设置”均可调整显示开关、跟随模式、行列数和方格大小；关闭跟随后可拖动浮窗，位置在本次游戏进程中保留。
+
+`quickAccess` 缺省使用默认配置，不改变旧数据库的 schemaVersion。`enabled`、`attached` 为布尔值；`rows`、`columns` 为 1–12 的整数；`cellSize` 为 32–128，默认 64，按界面缩放调整实际像素大小。大网格提供横向和纵向滚动。`cells` 最多 144 项，按从左到右、从上到下排列；更改列数会按新列数换行。缩小网格保留超出显示范围的绑定，重新扩大后恢复。
+
+每项格子为对象，含 `action`、`target`、`icon`、`label` 字符串；空对象为空格子。操作与目标：
+
+| action | 点击行为 | target |
+|---|---|---|
+| none | 编辑空格子 | 空字符串 |
+| category | 主面板切到衣柜并跳转分类，清除搜索过滤 | `categories:<分类 ID>` |
+| group | 主面板切到衣柜并查看服装组，清除搜索过滤 | `groups:<组 ID>` |
+| preset | 选择预设并展示工作搭配；实时预览开启时沿用自动应用行为 | 预设 ID |
+| applyPreset | 选择并立即应用预设，展示工作搭配 | 预设 ID |
+| useGroup | 一键使用指定组并立即应用，展示工作搭配 | `groups:`、`categories:` 或 `pluginCategories:` 组标识 |
+
+预设与使用组操作沿用现有随机选衣和槽位冲突规则。目标使用稳定 ID，重命名无需重绑；删除目标或预设绑定组后格子以橙色提示失效，点击不会应用旧搭配，右键可重新绑定。
+
+图标库使用项目已有的 Font Awesome Free Solid 字体，包含 34 个常见图标；支持中英文搜索。`icon` 标识包括 `folder`、`shirt`、`dress`、`shoes`、`socks`、`gloves`、`hat`、`crown`、`gem`、`ring`、`glasses`、`mask`、`star`、`heart`、`shield`、`magic`、`dragon`、`bolt`、`fire`、`snow`、`sun`、`moon`、`leaf`、`feather`、`palette`、`user`、`home`、`bookmark`、`layers`、`tag`、`archive`、`dice`、`music`、`check`。未知标识回退为文件夹图标；字体缺失时显示文字。图标来源：[Font Awesome](https://fontawesome.com/)，许可证随现有字体分发。

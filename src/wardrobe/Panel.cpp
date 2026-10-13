@@ -1,6 +1,7 @@
 #include "wardrobe/Panel.h"
 #include "wardrobe/Service.h"
 #include "wardrobe/SosBackend.h"
+#include "wardrobe/QuickAccess.h"
 #include "ui/Overlay.h"
 #include "ui/IconsFontAwesome6.h"
 #include "ui/UiTabs.h"
@@ -996,9 +997,27 @@ namespace Wardrobe
         }
         if (!service.store.error.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "%s", service.store.error.c_str());
         ImGui::TextDisabled("%s | %s", service.status.c_str(), SosBackend::Get().Status().c_str());
+        const auto shortcut = DrawQuickAccess(ImGui::GetWindowPos(), ImGui::GetWindowSize());
+        const bool selectWardrobe = !shortcut.action.empty();
+        if (shortcut.action == "category" || shortcut.action == "group")
+        {
+            NavigateGroup(shortcut.target);
+            search.clear(); sidebarSearch.clear();
+        }
+        else if (shortcut.action == "preset" || shortcut.action == "applyPreset")
+        {
+            service.SelectPreset(shortcut.target);
+            if (shortcut.action == "applyPreset" && !service.livePreview) service.Apply();
+            view = View::Working; viewID.clear(); search.clear();
+        }
+        else if (shortcut.action == "useGroup")
+        {
+            service.UseGroup(shortcut.target);
+            view = View::Working; viewID.clear(); search.clear();
+        }
         if (ImGui::BeginTabBar("Wardrobe pages"))
         {
-            if (ImGui::BeginTabItem(Tr("Wardrobe", "衣柜")))
+            if (ImGui::BeginTabItem(Tr("Wardrobe", "衣柜"), nullptr, selectWardrobe ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
                 const float font = ImGui::GetFontSize();
                 const float available = ImGui::GetContentRegionAvail().x;
@@ -1007,7 +1026,9 @@ namespace Wardrobe
                 const float browseWidth = std::max(1.0f, available - sidebarWidth - workingWidth - ImGui::GetStyle().ItemSpacing.x * 2);
                 ImGui::BeginChild("Views", ImVec2(sidebarWidth, 0), ImGuiChildFlags_Borders); DrawSidebar(); ImGui::EndChild();
                 ImGui::SameLine();
-                ImGui::BeginChild("Browse", ImVec2(browseWidth, 0)); DrawCatalog(); ImGui::EndChild();
+                ImGui::BeginChild("Browse", ImVec2(browseWidth, 0));
+                if (selectWardrobe) ImGui::SetScrollY(0);
+                DrawCatalog(); ImGui::EndChild();
                 ImGui::SameLine(); ImGui::BeginChild("Working", ImVec2(0, 0), ImGuiChildFlags_Borders); DrawWorking(); ImGui::EndChild();
                 ImGui::EndTabItem();
             }
@@ -1015,7 +1036,7 @@ namespace Wardrobe
             const auto metadataFlags = selectMetadata ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
             selectMetadata = false;
             if (ImGui::BeginTabItem(Tr("Metadata", "分类与数据"), nullptr, metadataFlags)) { DrawManagement(); ImGui::EndTabItem(); }
-            if (ImGui::BeginTabItem(Tr("Interface", "界面设置"))) { Overlay::DrawInterfaceSettings(); ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem(Tr("Interface", "界面设置"))) { DrawQuickAccessSettings(); Overlay::DrawInterfaceSettings(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
         DrawItemEditor();

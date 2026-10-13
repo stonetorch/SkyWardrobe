@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 #include "wardrobe/PinyinSearch.h"
 #include "wardrobe/ActualEquipmentPlan.h"
+#include "wardrobe/QuickAccessModel.h"
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -139,6 +140,7 @@ namespace Wardrobe
         if (!database["actualEquipmentMode"].is_string() ||
             (database["actualEquipmentMode"] != "off" && database["actualEquipmentMode"] != "shoes" && database["actualEquipmentMode"] != "all"))
             throw std::runtime_error("actualEquipmentMode must be off, shoes or all");
+        if (database.contains("quickAccess")) ValidateQuickAccess(database["quickAccess"]);
         database["schemaVersion"] = 1;
         Json canonicalItems = Json::object();
         for (const auto& [text, metadata] : database["items"].items())

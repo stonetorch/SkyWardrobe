@@ -32,5 +32,17 @@
   "partNames": {"custom1": "尾巴", "custom2": "耳环"},
   "workingItems": [],
   "activePreset": "",
-  "viewOptions": {"byPart": true, "automatic": true, "columns": 7}
+  "viewOptions": {"byPart": true, "automatic": true, "columns": 7},
+  "quickAccess": {
+    "enabled": true,
+    "attached": true,
+    "rows": 3,
+    "columns": 3,
+    "cellSize": 64,
+    "cells": [
+      {"action": "category", "target": "categories:dress", "icon": "dress", "label": "裙装"},
+      {"action": "category", "target": "categories:smp", "icon": "magic", "label": "SMP"},
+      {"action": "applyPreset", "target": "city-black", "icon": "moon", "label": "应用城市黑色套装"}
+    ]
+  }
 }
