@@ -32,12 +32,60 @@ int main()
         Require(SearchMetadata("qz", Json{{"name", "裙装"}, {"search", {"qun zhuang"}}}) > 0, "Category pinyin");
         std::vector<PartGroup> groups(3);
         groups[0].items.resize(46); groups[1].items.resize(12); groups[2].items.resize(34);
-        AllocateLanes(groups, 5, true);
+        auto layout = PlanPartColumns(groups, 5, true, 100, 10, 10);
         Require(groups[0].lanes == 2 && groups[1].lanes == 1 && groups[2].lanes == 2, "Balanced extra lanes");
-        AllocateLanes(groups, 2, true);
+        layout = PlanPartColumns(groups, 2, true, 100, 10, 10);
         Require(groups[0].lanes == 1 && groups[1].lanes == 1 && groups[2].lanes == 1, "Part overflow keeps separate lanes");
-        AllocateLanes(groups, 8, false);
+        layout = PlanPartColumns(groups, 8, false, 100, 10, 10);
         Require(groups[0].lanes == 1, "Manual lanes");
+        Require(layout.size() == 3, "Manual layout keeps categories separate");
+
+        groups.resize(4);
+        groups[0].items.resize(20); groups[1].items.resize(2);
+        groups[2].items.resize(3); groups[3].items.resize(1);
+        layout = PlanPartColumns(groups, 4, true, 100, 10, 10);
+        Require(layout.size() == 4 && groups[0].lanes == 3, "Merged short categories free lanes for overflowing category");
+        Require(layout.back().sections.size() == 3 && layout.back().usedHeight == 90, "All headings count toward packed height");
+        Require(layout.back().usedHeight <= 100, "Merged column fits without scrolling");
+        layout = PlanPartColumns(groups, 4, true, 89, 10, 10);
+        Require(groups[0].lanes == 2, "Smaller viewport repacks categories and reduces spare lanes");
+        for (const auto& column : layout)
+            Require(column.sections.size() == 1 || column.usedHeight <= 89, "Merged columns never exceed viewport");
+        layout = PlanPartColumns(groups, 4, true, 90, 10, 10);
+        Require(layout.back().sections.size() == 3, "Exact fit accepts all categories");
+        layout = PlanPartColumns(groups, 12, true, 1000, 10, 10);
+        Require(layout.size() == 4, "Spare configured columns prevent short category merging");
+        layout = PlanPartColumns(groups, 5, true, 100, 10, 10);
+        Require(layout.back().sections.size() == 3, "Merging starts after extra lane allocation fills configured columns");
+        layout = PlanPartColumns(groups, 4, true, 100, 10, 10, 10);
+        Require(layout.back().sections.size() == 1 && groups[0].lanes == 2, "Section padding prevents an otherwise oversized merge");
+        layout = PlanPartColumns(groups, 4, true, 110, 10, 10, 10);
+        Require(layout.back().sections.size() == 3 && layout.back().usedHeight == 110, "Exact fit includes padding above subsequent categories");
+        layout = PlanPartColumns(groups, 1, true, 0, 10, 10);
+        Require(layout.size() == 4, "Tiny viewport preserves all categories as scrolling columns");
+        std::vector<PartGroup> noGroups;
+        Require(PlanPartColumns(noGroups, 4, true, 100, 10, 10).empty(), "Reference-only view has no clothing columns");
+
+        // 多种窗口高度及列数下，每件服装恰好分配一次；合并列必须完整可见。
+        for (int available = 30; available <= 300; available += 30)
+            for (int count = 1; count <= 12; ++count)
+            {
+                layout = PlanPartColumns(groups, count, true, static_cast<float>(available), 10, 10, 10);
+                std::vector<std::vector<int>> seen;
+                for (const auto& group : groups) seen.emplace_back(group.items.size(), 0);
+                for (const auto& column : layout)
+                {
+                    Require(column.sections.size() == 1 || column.usedHeight <= available, "Packed height invariant");
+                    for (const auto& section : column.sections)
+                    {
+                        const auto& group = groups[section.group];
+                        for (auto i = group.items.size() * section.lane / group.lanes;
+                            i < group.items.size() * (section.lane + 1) / group.lanes; ++i) ++seen[section.group][i];
+                    }
+                }
+                for (const auto& items : seen)
+                    for (int occurrences : items) Require(occurrences == 1, "No duplicated or omitted clothing across columns");
+            }
 
         Json legacy = EmptyDatabase();
         legacy.erase("groups");

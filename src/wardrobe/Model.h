@@ -85,22 +85,103 @@ namespace Wardrobe
         int lanes = 1;
     };
 
-    inline void AllocateLanes(std::vector<PartGroup>& groups, int columns, bool automatic)
+    struct PartLane
+    {
+        std::size_t group{};
+        int lane{};
+    };
+
+    struct PartColumn
+    {
+        std::vector<PartLane> sections;
+        float usedHeight{};
+    };
+
+    inline std::vector<PartColumn> PlanPartColumns(std::vector<PartGroup>& groups, int columns,
+        bool automatic, float availableHeight, float headingHeight, float itemHeight, float sectionPadding = 0)
     {
         for (auto& group : groups) group.lanes = 1;
-        if (!automatic || groups.empty()) return;
+        std::vector<PartColumn> result;
+        std::vector<PartColumn> shortColumns;
+        const auto sectionHeight = [&](std::size_t count)
+        {
+            return headingHeight + static_cast<float>(count) * itemHeight;
+        };
+        // 先沿用空余列分配；只有设置列数全部占用后，才尝试合并短分类。
         int allocated = static_cast<int>(groups.size());
-        // 部件多于设置列数时保持每部件独立列；UI 用横向滚动展示。
-        while (allocated < columns)
+        while (automatic && allocated < columns)
         {
             auto best = groups.end();
             for (auto it = groups.begin(); it != groups.end(); ++it)
                 if (it->lanes < static_cast<int>(it->items.size()) &&
+                    sectionHeight((it->items.size() + it->lanes - 1) / it->lanes) > availableHeight &&
                     (best == groups.end() || static_cast<float>(it->items.size()) / it->lanes > static_cast<float>(best->items.size()) / best->lanes)) best = it;
             if (best == groups.end()) break;
             ++best->lanes;
             ++allocated;
         }
+        const bool mergeShortColumns = automatic && allocated >= columns;
+        for (std::size_t i = 0; i < groups.size(); ++i)
+            for (int lane = 0; lane < groups[i].lanes; ++lane)
+            {
+                const auto first = groups[i].items.size() * lane / groups[i].lanes;
+                const auto last = groups[i].items.size() * (lane + 1) / groups[i].lanes;
+                const float height = sectionHeight(last - first);
+                PartColumn column{{{i, lane}}, height};
+                if (mergeShortColumns && height <= availableHeight) shortColumns.push_back(std::move(column));
+                else result.push_back(std::move(column));
+            }
+        // 从高到低放入剩余高度最接近的短列，标题和每张卡片的间距也计入预算。
+        std::stable_sort(shortColumns.begin(), shortColumns.end(), [](const auto& a, const auto& b)
+        {
+            return a.usedHeight > b.usedHeight;
+        });
+        const auto shortBegin = result.size();
+        for (const auto& shortColumn : shortColumns)
+        {
+            const float height = shortColumn.usedHeight;
+            auto best = result.size();
+            for (auto i = shortBegin; i < result.size(); ++i)
+                if (result[i].usedHeight + sectionPadding + height <= availableHeight &&
+                    (best == result.size() || result[i].usedHeight > result[best].usedHeight)) best = i;
+            if (best == result.size()) result.push_back(shortColumn);
+            else
+            {
+                result[best].sections.push_back(shortColumn.sections.front());
+                result[best].usedHeight += sectionPadding + height;
+            }
+        }
+        // 合并腾出的列优先分给仍超高的部件；已经完整显示的列无需再拆分。
+        while (automatic && static_cast<int>(result.size()) < columns)
+        {
+            auto best = groups.end();
+            for (auto it = groups.begin(); it != groups.end(); ++it)
+                if (it->lanes < static_cast<int>(it->items.size()) &&
+                    headingHeight + static_cast<float>((it->items.size() + it->lanes - 1) / it->lanes) * itemHeight > availableHeight &&
+                    (best == groups.end() || static_cast<float>(it->items.size()) / it->lanes > static_cast<float>(best->items.size()) / best->lanes)) best = it;
+            if (best == groups.end()) break;
+            const auto index = static_cast<std::size_t>(best - groups.begin());
+            result.push_back({{{index, best->lanes}}, 0});
+            ++best->lanes;
+        }
+        for (auto& column : result)
+        {
+            std::sort(column.sections.begin(), column.sections.end(), [](const auto& a, const auto& b) { return a.group < b.group; });
+            column.usedHeight = static_cast<float>(column.sections.size() - 1) * sectionPadding;
+            for (const auto& section : column.sections)
+            {
+                const auto& group = groups[section.group];
+                const auto first = group.items.size() * section.lane / group.lanes;
+                const auto last = group.items.size() * (section.lane + 1) / group.lanes;
+                column.usedHeight += sectionHeight(last - first);
+            }
+        }
+        std::stable_sort(result.begin(), result.end(), [](const auto& a, const auto& b)
+        {
+            if (a.sections.front().group != b.sections.front().group) return a.sections.front().group < b.sections.front().group;
+            return a.sections.front().lane < b.sections.front().lane;
+        });
+        return result;
     }
 
     inline Json EmptyDatabase()

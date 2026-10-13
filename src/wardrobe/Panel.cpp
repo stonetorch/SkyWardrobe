@@ -566,17 +566,27 @@ namespace Wardrobe
             }
         }
 
+        void DrawCatalogSettings()
+        {
+            auto& service = Service::Get();
+            ImGui::PushID("Catalog settings");
+            ImGui::SeparatorText(Tr("Clothing list layout", "服装列表布局"));
+            bool changed = ImGui::Checkbox(Tr("Arrange by part", "按部件分列"), &byPart);
+            changed |= ImGui::Checkbox(Tr("Automatically arrange columns", "自动调整列布局"), &automatic);
+            ImGui::TextWrapped("%s", Tr("When all configured columns are occupied, combine short categories that fit with spacing, then redistribute spare columns.",
+                "设置列数全部占用后，才按可用高度合并较短分类；分类之间保留上方留白，腾出的列再分给仍需滚动的分类。"));
+            ImGui::SetNextItemWidth(160);
+            changed |= ImGui::SliderInt(Tr("Columns", "列数"), &columns, 1, 12);
+            if (changed) { service.store.database["viewOptions"] = {{"byPart", byPart}, {"automatic", automatic}, {"columns", columns}}; service.Save(); }
+            ImGui::PopID();
+        }
+
         void DrawCatalog()
         {
             auto& service = Service::Get();
             DrawGroupActions();
             ImGui::SetNextItemWidth(-1);
             ImGui::InputTextWithHint("##catalog search", Tr("Search name, pinyin, category, plugin, note...", "搜索名称、拼音、分类、插件、备注…"), &search);
-            bool changed = ImGui::Checkbox(Tr("Arrange by part", "按部件分列"), &byPart);
-            ImGui::SameLine(); changed |= ImGui::Checkbox(Tr("Distribute extra columns", "自动分配空余列"), &automatic);
-            ImGui::SameLine(); ImGui::SetNextItemWidth(110);
-            changed |= ImGui::SliderInt(Tr("Columns", "列数"), &columns, 1, 12);
-            if (changed) { service.store.database["viewOptions"] = {{"byPart", byPart}, {"automatic", automatic}, {"columns", columns}}; service.Save(); }
             static std::vector<std::pair<std::size_t, int>> ranked;
             static std::uint64_t cachedRevision = static_cast<std::uint64_t>(-1);
             static std::string cachedSearch, cachedViewID;
@@ -610,7 +620,7 @@ namespace Wardrobe
             };
             if (!byPart) drawReferences();
             if (ranked.empty() && references.empty()) { ImGui::TextWrapped("%s", Tr("No matching armor. Register plugins or adjust your filters.", "没有匹配的服装。请注册插件或调整筛选条件。")); return; }
-            const float height = std::max(80.0f, ImGui::GetContentRegionAvail().y);
+            const float height = std::max(1.0f, ImGui::GetContentRegionAvail().y);
             if (!byPart)
             {
                 ImGui::BeginChild("Catalog grid", ImVec2(0, height));
@@ -642,8 +652,16 @@ namespace Wardrobe
                 for (const auto& [index, score] : ranked) if (service.Part(service.catalog[index]) == part) group.items.push_back(index);
                 if (!group.items.empty()) groups.push_back(std::move(group));
             }
-            AllocateLanes(groups, columns, automatic);
-            const int lanes = std::accumulate(groups.begin(), groups.end(), references.empty() ? 0 : 1, [](int sum, const auto& group) { return sum + group.lanes; });
+            const auto& style = ImGui::GetStyle();
+            // 预留表格横向滚动条、单元格及子窗口内边距，缩放字体或窗口后按实际像素重新规划。
+            const float columnHeight = std::max(1.0f, height - style.ScrollbarSize - style.CellPadding.y * 2 - 2.0f);
+            const float contentHeight = std::max(0.0f, columnHeight - style.WindowPadding.y * 2 - style.ChildBorderSize * 2 - 2.0f);
+            const float headingHeight = ImGui::GetTextLineHeightWithSpacing();
+            const float itemHeight = CardHeight() + style.ItemSpacing.y;
+            const float sectionPadding = ImGui::GetFontSize();
+            const auto layout = PlanPartColumns(groups, std::max(1, columns - (references.empty() ? 0 : 1)),
+                automatic, contentHeight, headingHeight, itemHeight, sectionPadding);
+            const int lanes = static_cast<int>(layout.size()) + (references.empty() ? 0 : 1);
             const float width = std::max(ImGui::GetFontSize() * 11, (ImGui::GetContentRegionAvail().x - 20) / columns);
             if (ImGui::BeginTable("Part lanes", lanes, ImGuiTableFlags_ScrollX | ImGuiTableFlags_SizingFixedFit, ImVec2(0, height)))
             {
@@ -653,24 +671,47 @@ namespace Wardrobe
                 if (!references.empty())
                 {
                     ImGui::TableSetColumnIndex(column++);
+                    ImGui::BeginChild("References scroll", ImVec2(width, columnHeight), ImGuiChildFlags_Borders);
                     ImGui::TextUnformatted(Tr("Groups", "引用服装组"));
                     drawReferences();
+                    ImGui::EndChild();
                 }
-                for (const auto& group : groups)
-                    for (int lane = 0; lane < group.lanes; ++lane)
+                for (const auto& plannedColumn : layout)
+                {
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::PushID(column++);
+                    const bool fits = plannedColumn.usedHeight <= contentHeight;
+                    ImGui::BeginChild("Part scroll", ImVec2(width, columnHeight), ImGuiChildFlags_Borders,
+                        fits ? ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_None);
+                    if (fits) ImGui::SetScrollY(0);
+                    bool firstSection = true;
+                    for (const auto& section : plannedColumn.sections)
                     {
-                        ImGui::TableSetColumnIndex(column);
-                        ImGui::PushID(column++);
+                        // 后续分类标题上方留出一行字体高度，预算与绘制使用相同的 padding。
+                        if (!firstSection) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + sectionPadding);
+                        firstSection = false;
+                        const auto& group = groups[section.group];
+                        const int lane = section.lane;
+                        ImGui::PushID(group.part);
                         ImGui::Text("%s (%d/%d)", PartName(group.part).c_str(), lane + 1, group.lanes);
-                        ImGui::BeginChild("Part scroll", ImVec2(width, height - ImGui::GetFontSize() * 2), ImGuiChildFlags_Borders);
                         const auto first = group.items.size() * lane / group.lanes;
                         const auto last = group.items.size() * (lane + 1) / group.lanes;
-                        ImGuiListClipper clipper;
-                        clipper.Begin(static_cast<int>(last - first), CardHeight() + ImGui::GetStyle().ItemSpacing.y);
-                        while (clipper.Step()) for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
-                            DrawCard(service.catalog[group.items[first + i]], ImGui::GetContentRegionAvail().x);
-                        ImGui::EndChild(); ImGui::PopID();
+                        if (fits)
+                        {
+                            for (auto i = first; i < last; ++i)
+                                DrawCard(service.catalog[group.items[i]], ImGui::GetContentRegionAvail().x);
+                        }
+                        else
+                        {
+                            ImGuiListClipper clipper;
+                            clipper.Begin(static_cast<int>(last - first), itemHeight);
+                            while (clipper.Step()) for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+                                DrawCard(service.catalog[group.items[first + i]], ImGui::GetContentRegionAvail().x);
+                        }
+                        ImGui::PopID();
                     }
+                    ImGui::EndChild(); ImGui::PopID();
+                }
                 ImGui::EndTable();
             }
         }
@@ -1036,7 +1077,7 @@ namespace Wardrobe
             const auto metadataFlags = selectMetadata ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
             selectMetadata = false;
             if (ImGui::BeginTabItem(Tr("Metadata", "分类与数据"), nullptr, metadataFlags)) { DrawManagement(); ImGui::EndTabItem(); }
-            if (ImGui::BeginTabItem(Tr("Interface", "界面设置"))) { DrawQuickAccessSettings(); Overlay::DrawInterfaceSettings(); ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem(Tr("Interface", "界面设置"))) { DrawCatalogSettings(); DrawQuickAccessSettings(); Overlay::DrawInterfaceSettings(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
         DrawItemEditor();
