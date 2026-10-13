@@ -3,6 +3,7 @@
 #include "wardrobe/ActualEquipment.h"
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
+#include <REX/W32/KERNEL32.h>
 #include <functional>
 #include <memory>
 
@@ -38,6 +39,8 @@ namespace Wardrobe
             {
                 auto& backend = SosBackend::Get();
                 if (!backend.Current(epoch)) return;
+                // 缺失原生插件时禁止进入 VM，连 IsEnabled 探测也不能调用。
+                if (!backend.IsInstalled()) return;
                 auto* player = RE::PlayerCharacter::GetSingleton();
                 auto* skyrim = RE::SkyrimVM::GetSingleton();
                 auto vm = skyrim ? skyrim->impl : nullptr;
@@ -96,8 +99,17 @@ namespace Wardrobe
 
     SosBackend& SosBackend::Get() { static SosBackend backend; return backend; }
 
+    void SosBackend::DetectInstallation()
+    {
+        // DataLoaded 时 SKSE 插件已加载；检测进程模块，不把磁盘残留文件当作已安装。
+        installed_.store(REX::W32::GetModuleHandleW(L"SkyrimOutfitSystemSE.dll") != nullptr);
+        Reset();
+        if (!IsInstalled()) SKSE::log::warn("{}", Status());
+    }
+
     void SosBackend::SetEquipmentMode(ActualEquipmentMode mode)
     {
+        if (!IsInstalled()) return;
         equipmentMode_.store(mode);
         if (mode != ActualEquipmentMode::Off) return;
         std::uint64_t epoch;
@@ -121,6 +133,7 @@ namespace Wardrobe
 
     void SosBackend::Request(std::vector<std::string> keys, bool clear)
     {
+        if (!IsInstalled()) return;
         {
             std::lock_guard lock(mutex_);
             pending_ = std::move(keys); pendingClear_ = clear; hasPending_ = true;
@@ -131,6 +144,7 @@ namespace Wardrobe
 
     void SosBackend::StartNext()
     {
+        if (!IsInstalled()) return;
         auto operation = std::make_shared<Operation>();
         std::vector<std::string> keys;
         {
@@ -176,6 +190,7 @@ namespace Wardrobe
     void SosBackend::Reset()
     {
         std::lock_guard lock(mutex_);
-        ++epoch_; busy_ = false; hasPending_ = false; pending_.clear(); status_ = "SOS idle";
+        ++epoch_; busy_ = false; hasPending_ = false; pending_.clear();
+        status_ = IsInstalled() ? "SOS idle" : "Skyrim Outfit System is not installed or loaded; all SkyWardrobe features are disabled";
     }
 }

@@ -20,6 +20,8 @@ namespace Wardrobe
     {
     public:
         static SosBackend& Get();
+        void DetectInstallation();
+        bool IsInstalled() const { return installed_.load(); }
         void Request(std::vector<std::string> keys, bool clear) override;
         std::string Status() const override;
         void Reset();
@@ -35,5 +37,6 @@ namespace Wardrobe
         std::uint64_t epoch_{};
         std::string status_ = "SOS idle";
         std::atomic<ActualEquipmentMode> equipmentMode_{ActualEquipmentMode::Off};
+        std::atomic<bool> installed_{false};
     };
 }

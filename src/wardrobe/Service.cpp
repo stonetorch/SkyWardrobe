@@ -61,6 +61,7 @@ namespace Wardrobe
 
     void Service::Initialize()
     {
+        if (!SosBackend::Get().IsInstalled()) return;
         if (InitializePinyinSearch("Data/SKSE/Plugins/SkyWardrobe/dict"))
             SKSE::log::info("Automatic pinyin search initialized");
         else
@@ -370,6 +371,8 @@ namespace Wardrobe
 
     void OnGameMessage(std::uint32_t type)
     {
+        // 缺失依赖时不恢复设置或执行读档后的装备清理。
+        if (!SosBackend::Get().IsInstalled()) return;
         if (type == SKSE::MessagingInterface::kPreLoadGame || type == SKSE::MessagingInterface::kNewGame)
         {
             SosBackend::Get().Reset();

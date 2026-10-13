@@ -12,11 +12,13 @@
 #include "ui/InputMethod.h"
 #include "wardrobe/Service.h"
 #include "wardrobe/ActualEquipment.h"
+#include "wardrobe/SosBackend.h"
 
 namespace
 {
     void OnDataLoaded()
     {
+        Wardrobe::SosBackend::Get().DetectInstallation();
         Wardrobe::Service::Get().Initialize();
         Wardrobe::InstallConsole();
         Overlay::Install();

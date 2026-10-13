@@ -4,7 +4,7 @@ Skyrim SE / AE 的独立 SKSE 衣柜管理器。扫描已加载的 ARMO 资源�
 
 ## 使用
 
-运行依赖：匹配游戏版本的 SKSE、Address Library，以及 [Skyrim Outfit System SE Revived](https://github.com/lispcoc/SkyrimOutfitSystemSE)。衣柜浏览与数据管理可以在 SOS 未安装时使用；应用外观会显示缺失 / 禁用 API 的提示。SOS 需在自己的 MCM 中启用。
+运行依赖：匹配游戏版本的 SKSE、Address Library，以及 [Skyrim Outfit System SE Revived](https://github.com/lispcoc/SkyrimOutfitSystemSE)。SOS 未安装或原生 DLL 未加载时，SkyWardrobe 全部功能禁用，面板只显示依赖缺失提示，不会尝试 VM 调用。安装兼容版本后需要重启游戏。SOS 需在自己的 MCM 中启用。
 
 控制台命令无需 ESP、Papyrus 编译产物或 ConsoleUtil：
 

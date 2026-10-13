@@ -1005,6 +1005,8 @@ namespace Wardrobe
         Service::Get().PollSave();
         std::vector<std::pair<std::string, std::string>> pending;
         { std::lock_guard lock(commandMutex); pending.swap(commands); }
+        // 保留打开面板查看错误的入口，但不执行控制台排队的功能命令。
+        if (!SosBackend::Get().IsInstalled()) return;
         auto& service = Service::Get();
         for (const auto& [action, argument] : pending)
         {
@@ -1023,6 +1025,14 @@ namespace Wardrobe
 
     void DrawPanel()
     {
+        if (!SosBackend::Get().IsInstalled())
+        {
+            ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "%s",
+                Tr("Skyrim Outfit System (SOS) is not installed or loaded.", "未安装或未成功加载 Skyrim Outfit System（SOS）。"));
+            ImGui::TextWrapped("%s", Tr("All SkyWardrobe features are disabled. Install a compatible Skyrim Outfit System SE Revived and restart the game.",
+                "SkyWardrobe 的全部功能已禁用。请安装与当前游戏版本兼容的 Skyrim Outfit System SE Revived，然后重启游戏。"));
+            return;
+        }
         auto& service = Service::Get();
         static bool settingsLoaded = false;
         if (!settingsLoaded)
