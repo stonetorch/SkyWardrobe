@@ -249,11 +249,6 @@ namespace Wardrobe
         changed |= ImGui::IsItemDeactivatedAfterEdit();
         options["enabled"] = enabled; options["attached"] = attached;
         if (changed) Service::Get().Save();
-        editingCell = std::clamp(editingCell, 0, rows * columns - 1);
-        int cellNumber = editingCell + 1;
-        ImGui::SetNextItemWidth(180);
-        if (ImGui::SliderInt(Tr("Cell to edit", "要编辑的格子"), &cellNumber, 1, rows * columns, "%d", ImGuiSliderFlags_AlwaysClamp)) editingCell = cellNumber - 1;
-        if (ImGui::Button(Tr("Edit selected cell", "编辑选中格子"))) StartEditor(editingCell);
         ImGui::EndDisabled();
         ImGui::TextWrapped("%s", Tr("Click an empty cell or right-click any cell to configure it. Shrinking the grid retains hidden bindings; expanding restores them in order. Square size follows UI scale.",
             "点击空格子或右键任意格子可配置。缩小网格会保留隐藏绑定，扩大后按原顺序恢复。方格大小随界面缩放。"));
@@ -268,12 +263,22 @@ namespace Wardrobe
             const auto* viewport = ImGui::GetMainViewport();
             const auto& style = ImGui::GetStyle();
             const int rows = options["rows"], columns = options["columns"];
-            const float side = options["cellSize"].get<float>() * ImGui::GetFontSize() / 20.0f;
-            const float gap = style.ItemSpacing.x;
-            const float width = columns * side + (columns - 1) * gap + style.WindowPadding.x * 2 + style.ScrollbarSize;
-            const float height = rows * side + (rows - 1) * style.ItemSpacing.y + style.WindowPadding.y * 2 + ImGui::GetFrameHeightWithSpacing() * 2 + style.ScrollbarSize;
+            const float scale = ImGui::GetFontSize() / 20.0f;
+            const float side = options["cellSize"].get<float>() * scale;
+            const float gap = 8.0f * scale, padding = 12.0f * scale;
+            const float gridWidth = columns * side + (columns - 1) * gap;
+            const float gridHeight = rows * side + (rows - 1) * gap;
+            // 四边留白和横纵间距一致，只在内容超出视口时预留实际滚动条。
+            bool scrollX = false, scrollY = false;
+            for (int pass = 0; pass < 3; ++pass)
+            {
+                scrollX = gridWidth + padding * 2 + (scrollY ? style.ScrollbarSize : 0) > viewport->WorkSize.x;
+                scrollY = gridHeight + padding * 2 + (scrollX ? style.ScrollbarSize : 0) > viewport->WorkSize.y;
+            }
+            const float width = gridWidth + padding * 2 + (scrollY ? style.ScrollbarSize : 0);
+            const float height = gridHeight + padding * 2 + (scrollX ? style.ScrollbarSize : 0);
             const ImVec2 size(std::min(width, viewport->WorkSize.x), std::min(height, viewport->WorkSize.y));
-            ImVec2 position(panelPosition.x + panelSize.x + gap, panelPosition.y);
+            ImVec2 position(panelPosition.x + panelSize.x + gap, panelPosition.y + (panelSize.y - size.y) * 0.5f);
             // 优先放在右侧，右侧空间不足时尝试左侧；小屏幕夹到视口内并提供滚动。
             if (position.x + size.x > viewport->WorkPos.x + viewport->WorkSize.x)
                 position.x = panelPosition.x - size.x - gap;
@@ -284,8 +289,14 @@ namespace Wardrobe
             // 自由拖动模式只在出现时恢复位置，逐帧强制定位会抵消 ImGui 的鼠标拖动。
             ImGui::SetNextWindowPos(position, attached ? ImGuiCond_Always : ImGuiCond_Appearing);
             ImGui::SetNextWindowSize(size);
+            ImGui::SetNextWindowContentSize(ImVec2(gridWidth, gridHeight));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f * scale);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * scale);
+            ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
             const auto flags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
-                ImGuiWindowFlags_HorizontalScrollbar | (attached ? ImGuiWindowFlags_NoMove : 0);
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_HorizontalScrollbar | (attached ? ImGuiWindowFlags_NoMove : 0);
             if (ImGui::Begin(Tr("Shortcuts###WardrobeShortcuts", "快捷选项###WardrobeShortcuts"), nullptr, flags))
             {
                 detachedPosition = ImGui::GetWindowPos();
@@ -294,14 +305,13 @@ namespace Wardrobe
                 detachedPosition.y = std::clamp(detachedPosition.y, viewport->WorkPos.y,
                     viewport->WorkPos.y + std::max(0.0f, viewport->WorkSize.y - size.y));
                 ImGui::SetWindowPos(detachedPosition); hasDetachedPosition = true;
-                if (ImGui::SmallButton(CAF::Ui::Label(ICON_FA_GEAR, Tr("Configure", "配置")).c_str())) ImGui::OpenPopup("Grid settings");
-                if (ImGui::BeginPopup("Grid settings")) { DrawQuickAccessSettings(); ImGui::EndPopup(); }
                 // 复制格子快照，配置或服务保存不会使本帧遍历中的 JSON 引用失效。
                 const auto cells = options["cells"];
+                const auto origin = ImGui::GetCursorPos();
                 for (int row = 0; row < rows; ++row)
                     for (int column = 0; column < columns; ++column)
                     {
-                        if (column) ImGui::SameLine();
+                        ImGui::SetCursorPos(ImVec2(origin.x + column * (side + gap), origin.y + row * (side + gap)));
                         const int index = row * columns + column;
                         const auto cell = index < static_cast<int>(cells.size()) ? cells[index] : Json::object();
                         const auto action = cell.value("action", "none");
@@ -323,8 +333,14 @@ namespace Wardrobe
                         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) StartEditor(index);
                         ImGui::PopID();
                     }
+                // 右键留白打开整体配置，格子右键仍直接编辑该格；取消跟随后可拖动留白。
+                if (ImGui::BeginPopupContextWindow("Grid settings", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+                {
+                    DrawQuickAccessSettings(); ImGui::EndPopup();
+                }
             }
             ImGui::End();
+            ImGui::PopStyleVar(5);
         }
         DrawEditor();
         return request;
