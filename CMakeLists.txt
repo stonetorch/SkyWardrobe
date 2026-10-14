@@ -153,6 +153,12 @@ install(FILES ${WARDROBE_EXAMPLES} DESTINATION "${DEPLOY_ROOT}/SKSE/Plugins/SkyW
 
 
 enable_testing()
+add_executable(SkyWardrobeQuickAccessLayoutTests tests/QuickAccessLayoutTests.cpp)
+target_include_directories(SkyWardrobeQuickAccessLayoutTests PRIVATE src)
+target_link_libraries(SkyWardrobeQuickAccessLayoutTests PRIVATE imgui::imgui)
+target_compile_features(SkyWardrobeQuickAccessLayoutTests PRIVATE cxx_std_23)
+target_compile_options(SkyWardrobeQuickAccessLayoutTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME SkyWardrobeQuickAccessLayoutTests COMMAND SkyWardrobeQuickAccessLayoutTests)
 add_executable(SkyWardrobeQuickAccessTests tests/QuickAccessTests.cpp)
 target_include_directories(SkyWardrobeQuickAccessTests PRIVATE src src/third_party)
 target_compile_features(SkyWardrobeQuickAccessTests PRIVATE cxx_std_23)

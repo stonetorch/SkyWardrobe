@@ -1,4 +1,5 @@
 #include "wardrobe/QuickAccess.h"
+#include "wardrobe/QuickAccessLayout.h"
 #include "wardrobe/Panel.h"
 #include "wardrobe/Service.h"
 #include "ui/IconsFontAwesome6.h"
@@ -264,20 +265,9 @@ namespace Wardrobe
             const auto& style = ImGui::GetStyle();
             const int rows = options["rows"], columns = options["columns"];
             const float scale = ImGui::GetFontSize() / 20.0f;
-            const float side = options["cellSize"].get<float>() * scale;
-            const float gap = 8.0f * scale, padding = 12.0f * scale;
-            const float gridWidth = columns * side + (columns - 1) * gap;
-            const float gridHeight = rows * side + (rows - 1) * gap;
-            // 四边留白和横纵间距一致，只在内容超出视口时预留实际滚动条。
-            bool scrollX = false, scrollY = false;
-            for (int pass = 0; pass < 3; ++pass)
-            {
-                scrollX = gridWidth + padding * 2 + (scrollY ? style.ScrollbarSize : 0) > viewport->WorkSize.x;
-                scrollY = gridHeight + padding * 2 + (scrollX ? style.ScrollbarSize : 0) > viewport->WorkSize.y;
-            }
-            const float width = gridWidth + padding * 2 + (scrollY ? style.ScrollbarSize : 0);
-            const float height = gridHeight + padding * 2 + (scrollX ? style.ScrollbarSize : 0);
-            const ImVec2 size(std::min(width, viewport->WorkSize.x), std::min(height, viewport->WorkSize.y));
+            const auto layout = CalculateQuickAccessLayout(rows, columns, options["cellSize"].get<float>(),
+                scale, viewport->WorkSize, style.ScrollbarSize);
+            const auto [side, gap, padding, content, size] = layout;
             ImVec2 position(panelPosition.x + panelSize.x + gap, panelPosition.y + (panelSize.y - size.y) * 0.5f);
             // 优先放在右侧，右侧空间不足时尝试左侧；小屏幕夹到视口内并提供滚动。
             if (position.x + size.x > viewport->WorkPos.x + viewport->WorkSize.x)
@@ -289,7 +279,7 @@ namespace Wardrobe
             // 自由拖动模式只在出现时恢复位置，逐帧强制定位会抵消 ImGui 的鼠标拖动。
             ImGui::SetNextWindowPos(position, attached ? ImGuiCond_Always : ImGuiCond_Appearing);
             ImGui::SetNextWindowSize(size);
-            ImGui::SetNextWindowContentSize(ImVec2(gridWidth, gridHeight));
+            ImGui::SetNextWindowContentSize(content);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f * scale);
