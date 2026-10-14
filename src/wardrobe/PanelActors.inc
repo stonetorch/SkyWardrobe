@@ -1,4 +1,4 @@
-void DrawActorSelector()
+void DrawActorSelector(bool sidebar = false)
 {
     auto& service = Service::Get();
     auto& actors = service.store.database["actors"];
@@ -6,7 +6,12 @@ void DrawActorSelector()
     {
         return key == "player" ? std::string(Tr("Player", "玩家")) : actors[key].value("name", key);
     };
-    if (ImGui::BeginCombo(Tr("Current actor", "当前操作角色"), name(service.currentActor).c_str()))
+    if (sidebar)
+    {
+        ImGui::TextUnformatted(Tr("Current actor", "当前操作角色"));
+        ImGui::SetNextItemWidth(-1.0f);
+    }
+    if (ImGui::BeginCombo(sidebar ? "##current actor" : Tr("Current actor", "当前操作角色"), name(service.currentActor).c_str()))
     {
         if (ImGui::Selectable(name("player").c_str(), service.currentActor == "player")) service.SelectActor("player");
         for (const auto& [key, actor] : actors.items())

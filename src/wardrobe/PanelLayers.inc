@@ -17,6 +17,7 @@
 
         void DrawWorking()
         {
+            DrawActorSelector(true);
             auto& service = Service::Get();
             auto& presets = service.store.database["presets"];
             auto settings = service.LayersFor(service.currentActor);
@@ -102,8 +103,10 @@
             for (int layer = 0; layer < 3; ++layer)
             {
                 ImGui::PushID(layer);
-                const auto label = std::string(open[layer] ? "v " : "> ") + headings[layer];
-                if (ImGui::Selectable(label.c_str(), open[layer], 0, ImVec2(0, ImGui::GetFrameHeight())))
+                // 与左栏共用原生折叠箭头；展开状态仍由高度自适应布局管理。
+                ImGui::SetNextItemOpen(open[layer], ImGuiCond_Always);
+                ImGui::CollapsingHeader((headings[layer] + "###layer header").c_str());
+                if (ImGui::IsItemToggledOpen())
                 {
                     active = layer;
                     if (!compact) expanded[layer] = !expanded[layer];
