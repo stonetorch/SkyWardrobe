@@ -31,6 +31,13 @@ namespace Wardrobe
         void SetEquipmentMode(ActualEquipmentMode mode);
         void Add(std::string key);
         void Remove(std::string_view key);
+        void AddBackup(const std::string& key);
+        void RemoveBackup(const std::string& key);
+        void MoveLayer(const std::string& key, bool toBackup);
+        void UseBackupGroup(const std::string& id);
+        void SetLayerOptions(bool backupEnabled, bool originalEnabled, std::uint32_t hiddenSlots);
+        LayerSettings LayersFor(const std::string& actor) const;
+        std::vector<LayerResult> LayerPreview() const;
         void BeginBatch();
         void EndBatch(bool preview);
         void SetLivePreview(bool enabled);

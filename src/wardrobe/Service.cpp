@@ -251,6 +251,72 @@ namespace Wardrobe
         if (livePreview && !batching_) Apply(false, false);
     }
 
+    LayerSettings Service::LayersFor(const std::string& actor) const
+    {
+        const auto& profile = store.database["actors"][actor];
+        return {profile.value("backupItems", std::vector<std::string>{}), profile.value("backupEnabled", true),
+            profile.value("originalEnabled", false), profile.value("hiddenSlots", 0u)};
+    }
+    std::vector<LayerResult> Service::LayerPreview() const
+    {
+        const auto settings = LayersFor(currentActor);
+        const auto describe = [&](const std::vector<std::string>& keys)
+        {
+            std::vector<LayerItem> result;
+            for (const auto& key : keys)
+                if (const auto* item = Find(key)) result.push_back({key, Name(*item), item->slots});
+                else result.push_back({key, "Missing: " + key, 0});
+            return result;
+        };
+        std::vector<LayerItem> original;
+        for (const auto& actor : actorSnapshot.managed) if (actor.key == currentActor) original = actor.equipment;
+        const auto& profile = store.database["actors"][currentActor];
+        auto top = working;
+        if (profile.value("automatic", false) && !profile.value("manual", false) && profile["runtime"].contains("items"))
+            top = profile["runtime"]["items"].get<std::vector<std::string>>();
+        return ComposeLayers(describe(top), describe(settings.backup), original, settings);
+    }
+    void Service::AddBackup(const std::string& key)
+    {
+        if (!store.writable) return;
+        const auto* item = Find(key);
+        if (!item) return;
+        auto items = LayersFor(currentActor).backup;
+        std::erase_if(items, [&](const auto& other) { const auto* entry = Find(other); return other == key || (entry && (entry->slots & item->slots)); });
+        items.push_back(key); ActorProfile()["backupItems"] = items;
+        MarkManual(); SaveWorking(); if (livePreview && !batching_) Apply(false, false);
+    }
+    void Service::RemoveBackup(const std::string& key)
+    {
+        if (!store.writable) return;
+        auto items = LayersFor(currentActor).backup;
+        if (!std::erase(items, key)) return;
+        ActorProfile()["backupItems"] = items;
+        MarkManual(); SaveWorking(); if (livePreview && !batching_) Apply(false, false);
+    }
+    void Service::MoveLayer(const std::string& key, bool toBackup)
+    {
+        if (!store.writable || !Find(key)) return;
+        BeginBatch();
+        if (toBackup) { AddBackup(key); Remove(key); }
+        else { Add(key); RemoveBackup(key); }
+        EndBatch(true);
+    }
+    void Service::UseBackupGroup(const std::string& id)
+    {
+        if (!store.writable || !Group(id)) return;
+        ActorProfile()["backupItems"] = GenerateGroup(id);
+        ActorProfile()["backupGroup"] = id;
+        MarkManual(); SaveWorking(); if (livePreview) Apply(false, false);
+    }
+    void Service::SetLayerOptions(bool backupEnabled, bool originalEnabled, std::uint32_t hiddenSlots)
+    {
+        if (!store.writable) return;
+        auto& profile = ActorProfile();
+        profile["backupEnabled"] = backupEnabled; profile["originalEnabled"] = originalEnabled; profile["hiddenSlots"] = hiddenSlots;
+        MarkManual(); SaveWorking(); if (livePreview) Apply(false, false);
+    }
+
     const Json* Service::Group(const std::string& id) const
     {
         const auto [collection, key] = SplitGroupID(id);
@@ -366,11 +432,12 @@ namespace Wardrobe
 
     void Service::Apply(bool clear, bool persist)
     {
+        ActorProfile()["appearanceActive"] = !clear;
         MarkManual();
         if (persist) SaveWorking();
         else StoreActorContext();
         SosBackend::Get().RequestFor(currentActor, clear ? std::vector<std::string>{} : working, clear,
-            EquipmentMode(), ActorProfile().value("automatic", false));
+            EquipmentMode(), ActorProfile().value("automatic", false), false, {}, LayersFor(currentActor));
     }
 
     ActualEquipmentMode Service::EquipmentMode() const
@@ -529,7 +596,7 @@ namespace Wardrobe
             {
                 if (!loaded->contains(key)) { profile["runtime"] = Json::object(); profile.erase("presetRuntime"); continue; }
                 const auto& saved = (*loaded)[key];
-                for (const auto* field : {"runtime", "presetRuntime", "workingItems", "activePreset", "baseline", "manual", "manualState", "automatic", "actualEquipmentMode", "releasePending"})
+                for (const auto* field : {"runtime", "presetRuntime", "workingItems", "activePreset", "baseline", "manual", "manualState", "automatic", "actualEquipmentMode", "releasePending", "backupItems", "backupEnabled", "originalEnabled", "hiddenSlots", "appearanceActive"})
                     if (saved.contains(field)) profile[field] = saved[field];
                 if (!profile.value("managed", true)) { profile["automatic"] = false; profile["releasePending"] = true; }
                 profile["takeoverPending"] = profile.value("managed", true) && profile.value("automatic", false);
@@ -553,7 +620,7 @@ namespace Wardrobe
                 else status = "Unable to restore actor SOS settings; will retry when available";
                 SaveWorking(); continue;
             }
-            if (result.success) profile["runtime"] = std::move(result.runtime);
+            if (result.success) { profile["runtime"] = std::move(result.runtime); profile["appearanceActive"] = true; }
             else profile["runtime"]["signature"] = result.runtime.value("signature", "");
             profile["runtime"]["error"] = result.success ? "" : "Appearance application failed; retry with Resume automatic";
             SaveWorking();
@@ -600,7 +667,13 @@ namespace Wardrobe
                     }
                     continue;
                 }
-                if (profile.value("managed", true)) EvaluateAutomatic(actor);
+                if (profile.value("managed", true))
+                {
+                    if ((!profile.value("automatic", false) || profile.value("manual", false)) && profile.value("appearanceActive", false) && unavailableActors_.erase(actor.key))
+                        SosBackend::Get().RequestFor(actor.key, profile["workingItems"].get<std::vector<std::string>>(), false,
+                            ParseActualEquipmentMode(profile.value("actualEquipmentMode", "off")), profile.value("automatic", false), false, {}, LayersFor(actor.key));
+                    EvaluateAutomatic(actor);
+                }
             }
         }
         if (std::chrono::steady_clock::now() < nextActorPoll_) return;
@@ -689,7 +762,7 @@ namespace Wardrobe
             {
                 std::lock_guard lock(autoMutex_);
                 autoCompletions_.push_back({key, generation, success, std::move(runtime)});
-            });
+            }, LayersFor(actor.key));
     }
 
     void OnGameMessage(std::uint32_t type)

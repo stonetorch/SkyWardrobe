@@ -40,6 +40,10 @@ namespace Wardrobe
             ActualEquipmentMode mode{ActualEquipmentMode::Off};
             bool automatic{}, releaseOnly{}, restoreAfter{}, readOriginal{}, registered{};
             std::uint64_t version{};
+            std::vector<std::string> keys;
+            LayerSettings layers;
+            std::vector<LayerItem> originalSnapshot;
+            bool policySet{}, policyReset{}, shieldSet{};
 
             void Next(RE::BSScript::Variable result = {})
             {
@@ -104,6 +108,25 @@ namespace Wardrobe
                     else arguments = RE::MakeFunctionArguments(std::string(outfit), std::move(armors));
                     break;
                 case 4:
+                    if (!clear && !policyReset)
+                    {
+                        policyReset = true; --stage;
+                        function = "SetBodySlotPolicyToDefaultForOutfit";
+                        arguments = RE::MakeFunctionArguments(std::string(outfit)); break;
+                    }
+                    if (!clear && !policySet)
+                    {
+                        // 合成已包含允许透出的原版项，禁止 SOS 再自行透出。
+                        policySet = true; --stage;
+                        function = "SetAllBodySlotPoliciesForOutfit";
+                        arguments = RE::MakeFunctionArguments(std::string(outfit), std::string("XXOO")); break;
+                    }
+                    if (!clear && !shieldSet)
+                    {
+                        shieldSet = true; --stage;
+                        function = "SetBodySlotPoliciesForOutfit";
+                        arguments = RE::MakeFunctionArguments(std::string(outfit), std::uint32_t(9), std::string("XXOO")); break;
+                    }
                     if (clear || registered) { Next(); return; }
                     function = "AddActor"; arguments = RE::MakeFunctionArguments(std::move(player)); break;
                 case 5:
@@ -132,6 +155,7 @@ namespace Wardrobe
                         }
                     Next(); return;
                 default:
+                    if (!clear && !releaseOnly) backend.TrackLayers(actorKey, keys, layers, mode, automatic, originalSnapshot);
                     if (restoreAfter) RememberAutoSwitch(actorKey, std::nullopt);
                     backend.Finish(epoch, releaseOnly ? automatic ? "SOS automatic switching suspended" : "SOS automatic switching restored" : clear ? "SOS appearance cleared" : "SOS appearance refreshed", true);
                     return;
@@ -185,7 +209,7 @@ namespace Wardrobe
     }
 
     void SosBackend::RequestFor(std::string actor, std::vector<std::string> keys, bool clear,
-        ActualEquipmentMode mode, bool automatic, bool releaseOnly, std::function<void(bool)> completion)
+        ActualEquipmentMode mode, bool automatic, bool releaseOnly, std::function<void(bool)> completion, LayerSettings layers)
     {
         if (!IsInstalled()) { if (completion) completion(false); return; }
         std::function<void(bool)> cancelled;
@@ -193,12 +217,37 @@ namespace Wardrobe
             std::lock_guard lock(mutex_);
             auto it = std::find_if(pending_.begin(), pending_.end(), [&](const auto& request) { return request.actor == actor; });
             if (it != pending_.end()) { cancelled = std::move(it->completion); pending_.erase(it); }
+            if (clear) activeLayers_.erase(actor);
             const auto version = ++actorVersions_[actor];
-            pending_.push_back({std::move(actor), std::move(keys), clear, automatic, releaseOnly, mode, std::move(completion), version});
+            pending_.push_back({std::move(actor), std::move(keys), clear, automatic, releaseOnly, mode, std::move(completion), version, std::move(layers)});
             status_ = "SOS request queued";
         }
         if (cancelled) cancelled(false);
         SKSE::GetTaskInterface()->AddTask([this] { StartNext(); });
+    }
+
+    void SosBackend::TrackLayers(const std::string& actor, std::vector<std::string> keys, LayerSettings layers,
+        ActualEquipmentMode mode, bool automatic, std::vector<LayerItem> equipment)
+    {
+        std::lock_guard lock(mutex_);
+        activeLayers_[actor] = {{actor, std::move(keys), false, automatic, false, mode, {}, actorVersions_[actor], std::move(layers)}, std::move(equipment)};
+    }
+
+    void SosBackend::RefreshLayers(const std::string& actor)
+    {
+        auto* target = ResolveActor(actor);
+        if (!target || !target->Is3DLoaded()) return;
+        auto equipment = ReadOriginalEquipment(target);
+        RequestData request;
+        {
+            std::lock_guard lock(mutex_);
+            const auto it = activeLayers_.find(actor);
+            if (busy_ || it == activeLayers_.end() || !pending_.empty() || it->second.equipment == equipment) return;
+            request = it->second.request;
+            // 轮询合并装备变化，不推进自动换装的随机或顺序进度。
+            it->second.equipment = std::move(equipment);
+        }
+        RequestFor(actor, request.keys, false, request.mode, request.automatic, false, {}, request.layers);
     }
 
     void SosBackend::CancelActor(const std::string& actor)
@@ -207,6 +256,7 @@ namespace Wardrobe
         {
             std::lock_guard lock(mutex_);
             ++actorVersions_[actor];
+            activeLayers_.erase(actor);
             auto it = std::find_if(pending_.begin(), pending_.end(), [&](const auto& request) { return request.actor == actor; });
             if (it != pending_.end()) { cancelled = std::move(it->completion); pending_.erase(it); }
         }
@@ -224,6 +274,7 @@ namespace Wardrobe
             busy_ = true;
             auto request = std::move(pending_.front()); pending_.pop_front();
             keys = std::move(request.keys);
+            operation->keys = keys; operation->layers = std::move(request.layers);
             operation->clear = request.clear; operation->epoch = epoch_;
             operation->actorKey = std::move(request.actor);
             operation->version = request.version;
@@ -238,16 +289,42 @@ namespace Wardrobe
         operation->actorHandle = actor->GetHandle();
         operation->outfit = RuntimeOutfitName(operation->actorKey);
         auto* data = RE::TESDataHandler::GetSingleton();
-        for (const auto& text : keys)
+        std::map<std::string, RE::TESObjectARMO*> forms;
+        std::string unresolved;
+        const auto resolve = [&](const std::vector<std::string>& list, std::vector<LayerItem>& items)
         {
-            const auto key = FormKey::Parse(text);
-            auto* form = key && data ? data->LookupForm(key->localFormID, key->plugin) : nullptr;
-            auto* armor = form ? form->As<RE::TESObjectARMO>() : nullptr;
-            // 缺失模组时拒绝整个应用，避免用户误以为预设已完整展示。
-            if (!armor) { Finish(operation->epoch, "Unresolved armor: " + text); return; }
-            operation->armors.push_back(armor);
+            for (const auto& text : list)
+            {
+                const auto key = FormKey::Parse(text);
+                auto* form = key && data ? data->LookupForm(key->localFormID, key->plugin) : nullptr;
+                auto* armor = form ? form->As<RE::TESObjectARMO>() : nullptr;
+                if (!armor) { unresolved = text; return false; }
+                forms[text] = armor;
+                items.push_back({text, armor->GetName(), armor->GetSlotMask().underlying()});
+            }
+            return true;
+        };
+        std::vector<LayerItem> working, backup;
+        if (!operation->clear && !operation->releaseOnly)
+        {
+            if (!resolve(keys, working) || (operation->layers.backupEnabled && !resolve(operation->layers.backup, backup)))
+            { Finish(operation->epoch, "Unresolved armor: " + unresolved); return; }
+            const auto original = ReadOriginalEquipment(actor);
+            operation->originalSnapshot = original;
+            for (const auto& item : original)
+            {
+                const auto key = FormKey::Parse(item.key);
+                auto* form = key && data ? data->LookupForm(key->localFormID, key->plugin) : nullptr;
+                if (auto* armor = form ? form->As<RE::TESObjectARMO>() : nullptr) forms[item.key] = armor;
+            }
+            for (const auto& row : ComposeLayers(working, backup, original, operation->layers))
+                if (row.disposition == LayerDisposition::Visible)
+                {
+                    if (!forms.contains(row.item.key)) { Finish(operation->epoch, "Unresolved original armor: " + row.item.key); return; }
+                    operation->armors.push_back(forms.at(row.item.key));
+                    if (row.source != LayerSource::Original) operation->actualArmors.push_back(forms.at(row.item.key));
+                }
         }
-        operation->actualArmors = operation->armors;
         // 清除临时物品独立于 SOS 启用状态；玩家已有服装保留当前穿戴。
         if (operation->clear)
         {
@@ -282,7 +359,7 @@ namespace Wardrobe
     void SosBackend::Reset()
     {
         std::lock_guard lock(mutex_);
-        ++epoch_; busy_ = false; pending_.clear(); completion_ = {}; actorVersions_.clear();
+        ++epoch_; busy_ = false; pending_.clear(); completion_ = {}; actorVersions_.clear(); activeLayers_.clear();
         status_ = IsInstalled() ? "SOS idle" : "Skyrim Outfit System is not installed or loaded; all SkyWardrobe features are disabled";
     }
 }

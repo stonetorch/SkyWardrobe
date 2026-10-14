@@ -1,5 +1,6 @@
 #include "wardrobe/ActualEquipment.h"
 #include "wardrobe/ActorRuntime.h"
+#include "wardrobe/Model.h"
 #include <map>
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
@@ -136,6 +137,31 @@ namespace Wardrobe
                 else if (type == existingRecord) existingByActor[actor].push_back(resolved);
             }
         }
+    }
+
+    std::vector<LayerItem> ReadOriginalEquipment(RE::Actor* actor)
+    {
+        std::vector<LayerItem> result;
+        if (!actor || !actor->Is3DLoaded()) return result;
+        std::lock_guard lock(equipmentMutex);
+        for (const auto& [object, value] : Inventory(actor))
+        {
+            auto* armor = object ? object->As<RE::TESObjectARMO>() : nullptr;
+            if (!armor || !value.second || !value.second->IsWorn()) continue;
+            auto* file = armor->GetFile(0);
+            if (!file) continue;
+            bool temporary = false;
+            for (const auto& item : temporaryItems)
+                if (item.actor == actor->GetFormID() && item.form == armor->GetFormID())
+                {
+                    auto* list = FindTemporary(value.second.get(), item);
+                    if (list && (list->HasType<RE::ExtraWorn>() || list->HasType<RE::ExtraWornLeft>())) temporary = true;
+                }
+            const auto id = armor->GetFormID() & (file->IsLight() ? 0xFFFu : 0xFFFFFFu);
+            result.push_back({FormKey{file->fileName, id}.String(), armor->GetName(), armor->GetSlotMask().underlying(), temporary});
+        }
+        std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.key < b.key; });
+        return result;
     }
 
     void RegisterActualEquipmentSerialization()

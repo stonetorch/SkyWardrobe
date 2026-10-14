@@ -26,7 +26,8 @@ namespace Wardrobe
     {
         return {{"name", std::move(name)}, {"managed", true}, {"workingItems", LifeJson::array()},
             {"activePreset", ""}, {"automatic", false}, {"manual", false}, {"actualEquipmentMode", "off"},
-            {"runtime", LifeJson::object()}};
+            {"runtime", LifeJson::object()}, {"backupItems", LifeJson::array()}, {"backupEnabled", true},
+            {"originalEnabled", false}, {"hiddenSlots", 0u}, {"appearanceActive", false}};
     }
 
     inline void ValidateOutfitRuntime(const LifeJson& runtime, int depth = 0)
@@ -88,11 +89,15 @@ namespace Wardrobe
             for (const auto& [field, value] : defaults.items())
             {
                 if (!actor.contains(field)) actor[field] = value;
-                if (actor[field].type() != value.type()) throw std::runtime_error("Invalid actor field: " + field);
+                if (std::string_view(field) != "hiddenSlots" && actor[field].type() != value.type()) throw std::runtime_error("Invalid actor field: " + field);
             }
+            if (!actor["hiddenSlots"].is_number_unsigned() && (!actor["hiddenSlots"].is_number_integer() || actor["hiddenSlots"].get<std::int64_t>() < 0)) throw std::runtime_error("Invalid hidden slots");
+            if (actor["hiddenSlots"].get<std::uint64_t>() > 0xFFFFFFFFull) throw std::runtime_error("Invalid hidden slots");
+            for (const auto& key : actor["backupItems"]) if (!key.is_string()) throw std::runtime_error("Invalid backup item");
             for (const auto& key : actor["workingItems"]) if (!key.is_string()) throw std::runtime_error("actor working items must be strings");
             for (const auto* field : {"releasePending", "takeoverPending"})
                 if (actor.contains(field) && !actor[field].is_boolean()) throw std::runtime_error("Invalid actor boolean");
+            if (actor.contains("backupGroup") && !actor["backupGroup"].is_string()) throw std::runtime_error("Invalid backup group");
             if (actor.contains("manualState") && !actor["manualState"].is_string()) throw std::runtime_error("Invalid manual state");
             if (actor.contains("baseline"))
             {

@@ -1,5 +1,6 @@
 #pragma once
 #include <RE/Skyrim.h>
+#include "wardrobe/MultiLayer.h"
 #include <SKSE/SKSE.h>
 #include <optional>
 #include <string>
@@ -13,6 +14,7 @@ namespace Wardrobe
         std::string key, name;
         bool ready{};
         std::vector<std::string> states;
+        std::vector<LayerItem> equipment;
     };
     struct ActorSnapshot
     {

@@ -500,6 +500,10 @@ namespace
         ImGui::SetNextWindowSize(ImVec2(std::min(1120.0f * uiScale, viewport->WorkSize.x * 0.95f),
             std::min(700.0f * uiScale, viewport->WorkSize.y * 0.9f)), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+        // 右侧公共操作、三个层标题及紧凑列表需要随字体缩放保留可操作空间。
+        const float row = ImGui::GetFrameHeightWithSpacing();
+        ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(viewport->WorkSize.x, ImGui::GetFontSize() * 40),
+            std::min(viewport->WorkSize.y, row * 19)), ImVec2(FLT_MAX, FLT_MAX));
         if (ImGui::Begin("SkyWardrobe", &visible)) Wardrobe::DrawPanel();
         ImGui::End();
         if (!visible) SetOverlayVisible(false);

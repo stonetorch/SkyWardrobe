@@ -338,6 +338,9 @@ namespace Wardrobe
                 ImGui::EndDisabled();
                 if (ImGui::MenuItem(Tr("Edit metadata", "编辑别名 / 备注 / 分类 / 部件"))) StartEdit(entry);
                 if (ImGui::MenuItem(Tr("Remove from working outfit", "从工作搭配移除"), nullptr, false, selected)) service.Remove(entry.key);
+                ImGui::BeginDisabled(!service.store.writable);
+                if (ImGui::MenuItem(Tr("Add to backup outfit", "添加到后备搭配"))) service.AddBackup(entry.key);
+                ImGui::EndDisabled();
                 if (ImGui::MenuItem(Tr("Apply working outfit", "应用当前工作搭配"))) service.Apply();
                 ImGui::EndPopup();
             }
@@ -489,6 +492,7 @@ namespace Wardrobe
             {
                 if (ImGui::Button(Tr("Edit group metadata", "编辑服装组信息"))) StartGroupEdit(current);
                 ImGui::SameLine(); if (ImGui::Button(Tr("Use outfit group", "使用服装组"))) service.UseGroup(current);
+                if (ImGui::Button(Tr("Set backup outfit", "设为后备搭配"))) service.UseBackupGroup(current);
                 ImGui::SameLine();
                 ImGui::BeginDisabled(!service.store.writable);
                 if (ImGui::Button(Tr("Create subgroup", "创建子服装组")))
@@ -845,56 +849,7 @@ namespace Wardrobe
 
         #include "wardrobe/PanelActors.inc"
 
-        void DrawWorking()
-        {
-            auto& service = Service::Get();
-            auto& presets = service.store.database["presets"];
-            std::string title = Tr("Unsaved outfit", "未命名搭配");
-            if (presets.contains(service.activePreset)) title = ObjectName(service.activePreset, presets[service.activePreset]);
-            if (service.Dirty()) title += " *";
-            ImGui::TextWrapped("%s", title.c_str());
-            bool preview = service.livePreview;
-            if (ImGui::Checkbox(Tr("Live preview", "实时预览"), &preview)) service.SetLivePreview(preview);
-            if (service.ActorProfile().value("automatic", false))
-            {
-                ImGui::TextDisabled("%s", service.ActorProfile().value("manual", false) ? Tr("Manual outfit; automatic paused", "手动搭配 · 自动换装暂缓") : Tr("Automatic outfits active", "自动换装已启用"));
-                if (ImGui::Button(Tr("Resume automatic", "恢复自动"))) service.ResumeAutomatic();
-            }
-            const char* equipmentModes[] = {Tr("Off", "关闭"), Tr("Shoes only", "仅鞋子装备"), Tr("Equip all", "全部装备")};
-            auto equipmentMode = static_cast<int>(service.EquipmentMode());
-            ImGui::BeginDisabled(!service.store.writable);
-            if (ImGui::Combo(Tr("Actual equipment", "实际装备"), &equipmentMode, equipmentModes, 3))
-                service.SetEquipmentMode(static_cast<ActualEquipmentMode>(equipmentMode));
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", Tr("Also equip through the game. Changes armor stats and effects; missing items are added automatically. Shoes use slot 37. Enabled modes take effect on the next Apply; Off reclaims temporary items and keeps your existing equipment.",
-                    "同时通过原版路径装备，会改变护甲属性和装备效果；缺少的物品自动添加。鞋子按槽位 37 判断。启用模式下次应用生效；关闭回收临时物品，保留玩家原有物品的当前穿戴。"));
-            if (ImGui::Button(Tr("Apply", "应用外观"))) service.Apply();
-            ImGui::SameLine(); if (ImGui::Button(Tr("Clear appearance", "清除外观覆盖"))) service.Apply(true);
-            ImGui::BeginDisabled(service.activePreset.empty() || !presets.contains(service.activePreset) || !service.store.writable);
-            const auto binding = presets.contains(service.activePreset) ? presets[service.activePreset].value("group", "") : "";
-            ImGui::BeginDisabled(SplitGroupID(binding).first != "groups");
-            if (ImGui::Button(Tr("Overwrite current preset", "一键覆盖当前预设"))) service.OverwritePreset();
-            ImGui::EndDisabled();
-            if (ImGui::Button(Tr("Restore preset", "恢复预设"))) service.SelectPreset(service.activePreset);
-            ImGui::EndDisabled();
-            if (ImGui::Button(Tr("Undo overwrite", "撤销上次覆盖"))) service.UndoOverwrite();
-            ImGui::SeparatorText(Tr("Working items", "工作搭配部件"));
-            ImGui::BeginChild("Working items", ImVec2(0, 0));
-            const auto items = service.working;
-            for (const auto& key : items)
-            {
-                ImGui::PushID(key.c_str());
-                if (ImGui::SmallButton("×")) service.Remove(key);
-                ImGui::SameLine();
-                const auto* entry = service.Find(key);
-                const auto name = entry ? service.Name(*entry) : Tr("Missing: ", "缺失：") + key;
-                ImGui::TextWrapped("%s", name.c_str());
-                if (entry && ImGui::IsItemClicked(ImGuiMouseButton_Right)) StartEdit(*entry);
-                ImGui::PopID();
-            }
-            ImGui::EndChild();
-        }
+        #include "wardrobe/PanelLayers.inc"
 
         std::string NewID(const Json& collection, std::string_view prefix)
         {
@@ -1162,7 +1117,7 @@ namespace Wardrobe
                 ImGui::BeginChild("Browse", ImVec2(browseWidth, 0));
                 if (selectWardrobe) ImGui::SetScrollY(0);
                 DrawCatalog(); ImGui::EndChild();
-                ImGui::SameLine(); ImGui::BeginChild("Working", ImVec2(0, 0), ImGuiChildFlags_Borders); DrawWorking(); ImGui::EndChild();
+                ImGui::SameLine(); ImGui::BeginChild("Working", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse); DrawWorking(); ImGui::EndChild();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem(Tr("Actors", "角色管理"))) { DrawActorManagement(); ImGui::EndTabItem(); }

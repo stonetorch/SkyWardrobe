@@ -1,3 +1,5 @@
+#include "wardrobe/ActualEquipment.h"
+#include "wardrobe/SosBackend.h"
 #include "wardrobe/ActorRuntime.h"
 #include "wardrobe/Model.h"
 #include <map>
@@ -40,10 +42,11 @@ namespace Wardrobe
             return key;
         }
 
-        ActorInfo Describe(RE::Actor* actor, std::string key)
+        ActorInfo Describe(RE::Actor* actor, std::string key, bool includeEquipment = false)
         {
             ActorInfo info{std::move(key), actor ? actor->GetName() : "", actor && actor->Is3DLoaded(), {}};
             if (!info.ready) return info;
+            if (includeEquipment) info.equipment = ReadOriginalEquipment(actor);
             if (actor->IsInCombat()) info.states.push_back("combat");
             bool dungeon = false, city = false, town = false;
             auto* location = actor->GetCurrentLocation();
@@ -97,7 +100,11 @@ namespace Wardrobe
             ActorSnapshot next;
             auto* ui = RE::UI::GetSingleton();
             if (!ui || ui->IsMenuOpen(RE::BSFixedString("Main Menu")) || ui->GameIsPaused()) return;
-            for (const auto& key : keys) next.managed.push_back(Describe(ResolveActor(key), key));
+            for (const auto& key : keys)
+            {
+                SosBackend::Get().RefreshLayers(key);
+                next.managed.push_back(Describe(ResolveActor(key), key, true));
+            }
             if (auto* processes = RE::ProcessLists::GetSingleton())
                 processes->ForEachHighActor([&](RE::Actor* actor)
                 {

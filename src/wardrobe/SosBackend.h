@@ -1,5 +1,6 @@
 #pragma once
 #include "wardrobe/ActualEquipmentPlan.h"
+#include "wardrobe/MultiLayer.h"
 #include <atomic>
 #include <cstdint>
 #include <mutex>
@@ -28,7 +29,10 @@ namespace Wardrobe
         void Request(std::vector<std::string> keys, bool clear) override;
         void RequestFor(std::string actor, std::vector<std::string> keys, bool clear,
             ActualEquipmentMode mode, bool automatic = false, bool releaseOnly = false,
-            std::function<void(bool)> completion = {});
+            std::function<void(bool)> completion = {}, LayerSettings layers = {});
+        void RefreshLayers(const std::string& actor);
+        void TrackLayers(const std::string& actor, std::vector<std::string> keys, LayerSettings layers,
+            ActualEquipmentMode mode, bool automatic, std::vector<LayerItem> equipment);
         void ReleaseActor(std::string actor, bool clear = false);
         void CleanupEquipment(std::string actor);
         void CancelActor(const std::string& actor);
@@ -50,8 +54,11 @@ namespace Wardrobe
             ActualEquipmentMode mode{ActualEquipmentMode::Off};
             std::function<void(bool)> completion;
             std::uint64_t version{};
+            LayerSettings layers;
         };
         std::deque<RequestData> pending_;
+        struct ActiveLayers { RequestData request; std::vector<LayerItem> equipment; };
+        std::map<std::string, ActiveLayers> activeLayers_;
         std::function<void(bool)> completion_;
         std::map<std::string, std::uint64_t> actorVersions_;
         bool busy_{};

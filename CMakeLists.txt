@@ -154,6 +154,13 @@ install(FILES ${WARDROBE_EXAMPLES} DESTINATION "${DEPLOY_ROOT}/SKSE/Plugins/SkyW
 
 
 enable_testing()
+add_executable(SkyWardrobeMultiLayerTests tests/MultiLayerTests.cpp)
+target_include_directories(SkyWardrobeMultiLayerTests PRIVATE src src/third_party)
+target_link_libraries(SkyWardrobeMultiLayerTests PRIVATE imgui::imgui)
+target_compile_features(SkyWardrobeMultiLayerTests PRIVATE cxx_std_23)
+target_compile_options(SkyWardrobeMultiLayerTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME SkyWardrobeMultiLayerTests COMMAND SkyWardrobeMultiLayerTests)
+
 add_executable(SkyWardrobeLifeImprovementTests tests/LifeImprovementTests.cpp)
 target_include_directories(SkyWardrobeLifeImprovementTests PRIVATE src src/third_party)
 target_compile_features(SkyWardrobeLifeImprovementTests PRIVATE cxx_std_23)

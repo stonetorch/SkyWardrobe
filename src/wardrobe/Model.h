@@ -276,6 +276,7 @@ namespace Wardrobe
         for (auto& actor : database["actors"])
         {
             canonicalList(actor["workingItems"]);
+            canonicalList(actor["backupItems"]);
             if (actor.contains("baseline")) canonicalList(actor["baseline"]);
             canonicalRuntime(canonicalRuntime, actor["runtime"]);
             if (actor.contains("presetRuntime"))
