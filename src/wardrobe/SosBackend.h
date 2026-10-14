@@ -5,6 +5,9 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <deque>
+#include <functional>
+#include <map>
 
 namespace Wardrobe
 {
@@ -23,17 +26,35 @@ namespace Wardrobe
         void DetectInstallation();
         bool IsInstalled() const { return installed_.load(); }
         void Request(std::vector<std::string> keys, bool clear) override;
+        void RequestFor(std::string actor, std::vector<std::string> keys, bool clear,
+            ActualEquipmentMode mode, bool automatic = false, bool releaseOnly = false,
+            std::function<void(bool)> completion = {});
+        void ReleaseActor(std::string actor, bool clear = false);
+        void CleanupEquipment(std::string actor);
+        void CancelActor(const std::string& actor);
         std::string Status() const override;
         void Reset();
-        void Finish(std::uint64_t epoch, std::string message);
+        void Finish(std::uint64_t epoch, std::string message, bool success = false);
         bool Current(std::uint64_t epoch) const;
+        bool CurrentActor(std::uint64_t epoch, const std::string& actor, std::uint64_t version) const;
         void SetEquipmentMode(ActualEquipmentMode mode);
         ActualEquipmentMode EquipmentMode() const { return equipmentMode_.load(); }
     private:
         void StartNext();
         mutable std::mutex mutex_;
-        std::vector<std::string> pending_;
-        bool pendingClear_{}, hasPending_{}, busy_{};
+        struct RequestData
+        {
+            std::string actor;
+            std::vector<std::string> keys;
+            bool clear{}, automatic{}, releaseOnly{};
+            ActualEquipmentMode mode{ActualEquipmentMode::Off};
+            std::function<void(bool)> completion;
+            std::uint64_t version{};
+        };
+        std::deque<RequestData> pending_;
+        std::function<void(bool)> completion_;
+        std::map<std::string, std::uint64_t> actorVersions_;
+        bool busy_{};
         std::uint64_t epoch_{};
         std::string status_ = "SOS idle";
         std::atomic<ActualEquipmentMode> equipmentMode_{ActualEquipmentMode::Off};

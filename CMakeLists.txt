@@ -34,6 +34,7 @@ add_commonlibsse_plugin(${PROJECT_NAME}
         src/ui/UiTabs.cpp
         src/wardrobe/Store.cpp
         src/wardrobe/PinyinSearch.cpp
+        src/wardrobe/ActorRuntime.cpp
         src/wardrobe/Service.cpp
         src/wardrobe/SosBackend.cpp
         src/wardrobe/ActualEquipment.cpp
@@ -153,6 +154,11 @@ install(FILES ${WARDROBE_EXAMPLES} DESTINATION "${DEPLOY_ROOT}/SKSE/Plugins/SkyW
 
 
 enable_testing()
+add_executable(SkyWardrobeLifeImprovementTests tests/LifeImprovementTests.cpp)
+target_include_directories(SkyWardrobeLifeImprovementTests PRIVATE src src/third_party)
+target_compile_features(SkyWardrobeLifeImprovementTests PRIVATE cxx_std_23)
+target_compile_options(SkyWardrobeLifeImprovementTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME SkyWardrobeLifeImprovementTests COMMAND SkyWardrobeLifeImprovementTests)
 add_executable(SkyWardrobeQuickAccessLayoutTests tests/QuickAccessLayoutTests.cpp)
 target_include_directories(SkyWardrobeQuickAccessLayoutTests PRIVATE src)
 target_link_libraries(SkyWardrobeQuickAccessLayoutTests PRIVATE imgui::imgui)

@@ -1,3 +1,4 @@
+#include "wardrobe/ActorRuntime.h"
 #include "ui/Overlay.h"
 #include "ui/IconsFontAwesome6.h"
 #include "ui/UiTabs.h"
@@ -317,6 +318,7 @@ namespace
 
     void SetOverlayVisible(bool show)
     {
+        if (show && !visible) Wardrobe::CaptureWatchedActor();
         inputOverlayVisible = show;
         visible = show;
         Overlay::InputMethod::SetOverlayState(show, true);

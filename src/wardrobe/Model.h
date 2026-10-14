@@ -4,6 +4,7 @@
 #include "wardrobe/PinyinSearch.h"
 #include "wardrobe/ActualEquipmentPlan.h"
 #include "wardrobe/QuickAccessModel.h"
+#include "wardrobe/LifeModel.h"
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -265,6 +266,20 @@ namespace Wardrobe
                 database["groups"][groupID].erase("group");
                 preset["group"] = "groups:" + groupID;
             }
+        }
+        ValidateLifeData(database);
+        const auto canonicalRuntime = [&](auto&& self, Json& runtime) -> void
+        {
+            if (runtime.contains("items")) canonicalList(runtime["items"]);
+            if (runtime.contains("resume")) self(self, runtime["resume"]);
+        };
+        for (auto& actor : database["actors"])
+        {
+            canonicalList(actor["workingItems"]);
+            if (actor.contains("baseline")) canonicalList(actor["baseline"]);
+            canonicalRuntime(canonicalRuntime, actor["runtime"]);
+            if (actor.contains("presetRuntime"))
+                for (auto& runtime : actor["presetRuntime"]) canonicalRuntime(canonicalRuntime, runtime);
         }
         if (database.contains("partNames"))
         {

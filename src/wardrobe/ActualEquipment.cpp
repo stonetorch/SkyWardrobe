@@ -1,4 +1,6 @@
 #include "wardrobe/ActualEquipment.h"
+#include "wardrobe/ActorRuntime.h"
+#include <map>
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
 #include <algorithm>
@@ -13,14 +15,15 @@ namespace Wardrobe
             RE::FormID form{};
             RE::FormID owner{};
             std::uint16_t uniqueID{};
+            RE::FormID actor{};
         };
         std::mutex equipmentMutex;
         std::vector<TemporaryItem> temporaryItems;
-        std::vector<RE::FormID> equippedExistingItems;
+        std::map<RE::FormID, std::vector<RE::FormID>> existingByActor;
         constexpr std::uint32_t serializationID = 0x53574445; // SWDE
         constexpr std::uint32_t temporaryRecord = 1, existingRecord = 2;
 
-        auto Inventory(RE::PlayerCharacter* player)
+        auto Inventory(RE::Actor* player)
         {
             return player->GetInventory([](RE::TESBoundObject& object) { return object.IsArmor(); });
         }
@@ -44,11 +47,12 @@ namespace Wardrobe
             return nullptr;
         }
 
-        std::string RemoveTemporary(RE::PlayerCharacter* player, RE::ActorEquipManager* manager,
+        std::string RemoveTemporary(RE::Actor* player, RE::ActorEquipManager* manager,
             const std::vector<RE::FormID>& keep)
         {
             for (auto it = temporaryItems.begin(); it != temporaryItems.end();)
             {
+                if (it->actor != player->GetFormID()) { ++it; continue; }
                 auto* armor = RE::TESForm::LookupByID<RE::TESObjectARMO>(it->form);
                 auto inventory = Inventory(player);
                 const auto found = inventory.find(armor);
@@ -82,13 +86,18 @@ namespace Wardrobe
         void Save(SKSE::SerializationInterface* serialization)
         {
             std::lock_guard lock(equipmentMutex);
+            SaveActorBindings(serialization);
             for (const auto& item : temporaryItems)
             {
-                const std::uint32_t data[] = {item.form, item.owner, item.uniqueID};
-                if (!serialization->WriteRecord(temporaryRecord, 1, data)) SKSE::log::error("Cannot save temporary equipment record");
+                const std::uint32_t data[] = {item.form, item.owner, item.uniqueID, item.actor};
+                if (!serialization->WriteRecord(temporaryRecord, 2, data)) SKSE::log::error("Cannot save temporary equipment record");
             }
-            for (const auto form : equippedExistingItems)
-                if (!serialization->WriteRecord(existingRecord, 1, form)) SKSE::log::error("Cannot save actual equipment record");
+            for (const auto& [actor, forms] : existingByActor)
+                for (const auto form : forms)
+                {
+                    const std::uint32_t data[] = {form, actor};
+                    if (!serialization->WriteRecord(existingRecord, 2, data)) SKSE::log::error("Cannot save actual equipment record");
+                }
         }
 
         void Revert(SKSE::SerializationInterface*)
@@ -96,32 +105,35 @@ namespace Wardrobe
             // 读档只丢弃旧存档的记账，不对即将卸载的世界执行穿脱或删除。
             std::lock_guard lock(equipmentMutex);
             temporaryItems.clear();
-            equippedExistingItems.clear();
+            existingByActor.clear();
+            ResetActorBindings();
         }
 
         void Load(SKSE::SerializationInterface* serialization)
         {
             std::lock_guard lock(equipmentMutex);
             temporaryItems.clear();
-            equippedExistingItems.clear();
+            existingByActor.clear();
+            ResetActorBindings();
             std::uint32_t type{}, version{}, length{};
             while (serialization->GetNextRecordInfo(type, version, length))
             {
-                if (version != 1) continue;
-                std::uint32_t data[3]{};
-                if ((type == temporaryRecord && length == sizeof(data)) || (type == existingRecord && length == sizeof(data[0])))
+                if (type >= 3 && type <= 5) { LoadActorBinding(serialization, type, version, length); continue; }
+                if (version != 1 && version != 2) continue;
+                std::uint32_t data[4]{};
+                const auto expected = type == temporaryRecord ? (version == 1 ? 12u : 16u) : (version == 1 ? 4u : 8u);
+                if ((type != temporaryRecord && type != existingRecord) || length != expected) continue;
+                if (serialization->ReadRecordData(data, length) != length) continue;
+                RE::FormID resolved{}, actor = 0x14;
+                if (!serialization->ResolveFormID(data[0], resolved)) continue;
+                if (version == 2 && !serialization->ResolveFormID(data[type == temporaryRecord ? 3 : 1], actor)) continue;
+                if (type == temporaryRecord && data[2] <= 0xFFFF)
                 {
-                    if (serialization->ReadRecordData(data, length) != length) continue;
-                    RE::FormID resolved{};
-                    if (!serialization->ResolveFormID(data[0], resolved)) continue;
-                    if (type == temporaryRecord && data[2] <= 0xFFFF)
-                    {
-                        RE::FormID owner{};
-                        if (data[1] == 0 || serialization->ResolveFormID(data[1], owner))
-                            temporaryItems.push_back({resolved, owner, static_cast<std::uint16_t>(data[2])});
-                    }
-                    else if (type == existingRecord) equippedExistingItems.push_back(resolved);
+                    RE::FormID owner{};
+                    if (data[1] == 0 || serialization->ResolveFormID(data[1], owner))
+                        temporaryItems.push_back({resolved, owner, static_cast<std::uint16_t>(data[2]), actor});
                 }
+                else if (type == existingRecord) existingByActor[actor].push_back(resolved);
             }
         }
     }
@@ -137,24 +149,25 @@ namespace Wardrobe
         }
     }
 
-    std::string ClearTemporaryEquipment()
+    std::string ClearTemporaryEquipment(RE::Actor* actor)
     {
         std::lock_guard lock(equipmentMutex);
-        auto* player = RE::PlayerCharacter::GetSingleton();
+        auto* player = actor ? actor : RE::PlayerCharacter::GetSingleton();
         auto* manager = RE::ActorEquipManager::GetSingleton();
-        if (!player || !player->Is3DLoaded() || !manager) return "Player is not ready for temporary equipment cleanup";
+        if (!player || !player->Is3DLoaded() || !manager) return "Actor is not ready for temporary equipment cleanup";
         // 玩家原有物品保留当前穿戴；仅回收衣柜自动添加的指定实例，不恢复先前装备。
-        equippedExistingItems.clear();
+        existingByActor.erase(player->GetFormID());
         return RemoveTemporary(player, manager, {});
     }
 
-    std::string ApplyActualEquipment(const std::vector<RE::TESObjectARMO*>& armors, ActualEquipmentMode mode)
+    std::string ApplyActualEquipment(const std::vector<RE::TESObjectARMO*>& armors, ActualEquipmentMode mode, RE::Actor* actor)
     {
-        if (mode == ActualEquipmentMode::Off) return ClearTemporaryEquipment();
+        if (mode == ActualEquipmentMode::Off) return ClearTemporaryEquipment(actor);
         std::lock_guard lock(equipmentMutex);
-        auto* player = RE::PlayerCharacter::GetSingleton();
+        auto* player = actor ? actor : RE::PlayerCharacter::GetSingleton();
         auto* manager = RE::ActorEquipManager::GetSingleton();
-        if (!player || !player->Is3DLoaded() || !manager) return "Player is not ready for actual equipment";
+        if (!player || !player->Is3DLoaded() || !manager) return "Actor is not ready for actual equipment";
+        auto& equippedExistingItems = existingByActor[player->GetFormID()];
         std::vector<RE::TESObjectARMO*> targets;
         std::vector<RE::FormID> keep;
         std::uint32_t occupied{};
@@ -206,7 +219,7 @@ namespace Wardrobe
                 if (found->second.second && found->second.second->extraLists)
                     for (auto* list : *found->second.second->extraLists) if (list) { equipList = list; break; }
             }
-            const auto isTemporary = added || std::any_of(temporaryItems.begin(), temporaryItems.end(), [armor](const auto& item) { return item.form == armor->GetFormID(); });
+            const auto isTemporary = added || std::any_of(temporaryItems.begin(), temporaryItems.end(), [armor, player](const auto& item) { return item.actor == player->GetFormID() && item.form == armor->GetFormID(); });
             if (!isTemporary && std::find(equippedExistingItems.begin(), equippedExistingItems.end(), armor->GetFormID()) == equippedExistingItems.end())
                 equippedExistingItems.push_back(armor->GetFormID());
             // 不排队、不强制锁定，走原版 EquipObject 的即时路径，让装备效果及其他模组收到正常事件。
@@ -228,7 +241,7 @@ namespace Wardrobe
                         list->Add(id);
                     }
                     // 原版为玩家物品创建的唯一标识随存档保留，用它精确回收本次添加的实例。
-                    temporaryItems.push_back({armor->GetFormID(), id->baseID, id->uniqueID});
+                    temporaryItems.push_back({armor->GetFormID(), id->baseID, id->uniqueID, player->GetFormID()});
                 }
                 else
                 {

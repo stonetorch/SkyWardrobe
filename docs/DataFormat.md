@@ -10,15 +10,29 @@
 | pluginCategories | object | 键是来源插件文件名，值含 enabled、alias、search |
 | categories | object | 键是稳定分类 ID，值含 name、search、aliases |
 | items | object | 键是 PluginName + 本地十六进制 FormID，值含 alias、note、favorite、categories、part、search |
-| presets | object | 键是稳定预设 ID，值含 name、search、items |
-| workingItems | string array | 工作搭配中的稳定 FormKey |
-| activePreset | string | 当前预设 ID，空字符串表示未绑定 |
-| actualEquipmentMode | string | 实际装备模式：off（关闭，默认）、shoes（仅槽位 37 的鞋）、all（全部工作搭配服装） |
+| presets | object | 键是稳定预设 ID，值含 name、search、actor、rules；group 保留默认组兼容入口 |
+| workingItems | string array | 玩家工作搭配的兼容镜像，逐角色内容见 actors |
+| activePreset | string | 玩家当前预设的兼容镜像 |
+| actualEquipmentMode | string | 玩家模式兼容镜像：off、shoes、all；逐角色模式见 actors |
+| livePreview | boolean | 实时预览，缺省 true |
+| directories | object | 单层目录，键为目录 ID，值含 name |
+| navigation | object | directoryOrder、categoryOrder、groupOrder、placements、collapsed |
+| actors | object | 角色引用键到 name、managed、workingItems、activePreset、actualEquipmentMode、automatic、manual、runtime 等配置 |
 | partNames | object | 自定义部件 ID 到显示名称 |
 | viewOptions | object | byPart、automatic、columns |
 | quickAccess | object | 快捷浮窗的 enabled、attached、rows、columns、cellSize、cells |
 
 FormKey 示例：`Clothes.esp|000ABC`；普通 ESP 最多 24 位本地 ID，ESL 实际使用 12 位。不要把加载顺序索引或 `FE123ABC` 写入 JSON。缺失模组时保留字符串，并在应用时给出错误。十六进制保存统一大写与至少六位；重复 FormKey 会去重，但重复的元数据键会报错。
+
+## 导航与角色预设扩展
+
+导航顺序数组保存带类型前缀的引用：`directory:dir-1`、`categories:daily`、`groups:casual`、`pluginCategories:Clothes.esp`。过期和重复顺序条目不显示，新条目追加在已有顺序后。`placements` 把普通服装组或移入普通分区的模组条目映射到目录 ID，空字符串为未整理。模组键不在 placements 中时放在最下方注册模组分区，仍按原有插件文件名顺序。移动不转换服装组类型，不复制成员。`collapsed` 保存分区和目录折叠状态，搜索展开不覆盖用户折叠选择。
+
+玩家角色键固定 `player`。普通人物使用引用自身的 `PluginName|LocalFormID`，不是 NPC 基础类型；动态人物使用 `dynamic:` 标识，由 co-save 保存 FormID 绑定并在读档时调用 SKSE ResolveFormID。不同存档中未建立绑定的动态人物保持不可用，不能用同名人物自动替代。移除管理保留配置并置 managed=false；未加载时用 releasePending 延迟清理，takeoverPending 表示等待关闭该角色的 SOS 自动切换。
+
+每个预设归属一个 actor。rules 的键为 combat、dungeon、city、town、default，值为 `{ "enabled": true, "mode": "random", "groups": ["groups:a", "groups:b"] }`。mode 支持 single、random、sequence。组内穿搭仍是随机槽位互斥选择，不递归收集引用组。actor.runtime 保存最近成功的 items、state、group、条件 signature、各条件 progress.last，以及战斗前 resume；presetRuntime 按预设保存独立进度。工作搭配和自动结果分离。
+
+co-save 沿用 SWDE serialization ID：实际装备记录 1/2 使用版本 2，增加角色归属，并兼容版本 1 的玩家记录；记录 3 保存动态引用绑定，4 保存接管前 SOS 自动切换值，5 保存角色上下文快照。载入存档时，结果、轮换进度、工作搭配、选中预设和装备/自动模式从该存档恢复，目录与规则定义仍从 JSON 读取。角色管理的移除状态保持当前 JSON 决定。配置缺少新字段时渐进补全，旧预设归属玩家并迁移到默认条件，自动初始关闭。
 
 服装原名、别名、备注、分类、插件别名及预设名称中的中文通过 cpp-pinyin 自动生成无声调拼音索引，无需维护拼音表。支持全拼、连续首字母和连续音节前缀组合：`裙子` 可用 `qun zi`、`qunzi`、`qz`、`qzi`、`qu zi` 搜索；`黑色连衣裙` 可用 `hslyq`、`lyq`、`lianyiqun`、`heiselyq` 搜索。忽略 ASCII 空格和大小写；匹配不会跳过音节，也不会跳过单个音节内部的字母。原文匹配排序优先于自动拼音匹配。
 

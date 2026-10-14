@@ -2,6 +2,9 @@
 #include "wardrobe/Store.h"
 #include <mutex>
 #include <future>
+#include "wardrobe/ActorRuntime.h"
+#include <set>
+#include <atomic>
 
 namespace Wardrobe
 {
@@ -23,11 +26,26 @@ namespace Wardrobe
         void PollSave();
         void Initialize();
         void Reload();
-        void Apply(bool clear = false);
+        void Apply(bool clear = false, bool persist = true);
         ActualEquipmentMode EquipmentMode() const;
         void SetEquipmentMode(ActualEquipmentMode mode);
         void Add(std::string key);
         void Remove(std::string_view key);
+        void BeginBatch();
+        void EndBatch(bool preview);
+        void SetLivePreview(bool enabled);
+        void SelectActor(const std::string& key);
+        void AddActor(const ActorInfo& actor);
+        void RemoveActor(const std::string& key);
+        void SetAutomatic(bool enabled);
+        void ResumeAutomatic(bool reset = false);
+        void ActivatePreset(const std::string& id);
+        void TickActors();
+        void ResetActorSession();
+        void QueueSessionReset(bool ready);
+        Json& ActorProfile() { return store.database["actors"][currentActor]; }
+        std::string currentActor = "player";
+        ActorSnapshot actorSnapshot;
         const Json* Group(const std::string& id) const;
         bool InGroup(const ClothingEntry& entry, const std::string& id) const;
         void SetGroupItem(const std::string& id, const ClothingEntry& entry, bool included);
@@ -50,12 +68,32 @@ namespace Wardrobe
         std::vector<std::string> working;
         std::string activePreset;
         std::string status;
-        bool livePreview = false;
+        bool livePreview = true;
         std::uint64_t revision{};
     private:
         void RebuildIndex();
         void SaveWorking();
         void FlushSave();
+        void StoreActorContext();
+        void MarkManual();
+        std::vector<std::string> GenerateGroup(const std::string& id) const;
+        void EvaluateAutomatic(const ActorInfo& actor);
+        bool batching_{};
+        std::atomic<bool> sessionReset_{false}, worldReady_{true};
+        std::chrono::steady_clock::time_point nextActorPoll_{};
+        std::set<std::string> autoBusy_, unavailableActors_, equipmentCleanupPending_;
+        std::map<std::string, std::uint64_t> actorGeneration_;
+        struct AutoCompletion
+        {
+            std::string actor;
+            std::uint64_t generation{};
+            bool success{};
+            Json runtime;
+            bool release{};
+            bool takeover{};
+        };
+        std::mutex autoMutex_;
+        std::vector<AutoCompletion> autoCompletions_;
         std::future<std::string> pendingSave_;
         bool saveQueued_ = false;
         Json indexedCategories_;

@@ -605,6 +605,35 @@ namespace Wardrobe
                     return service.catalog[a.first].displayName < service.catalog[b.first].displayName;
                 });
             }
+            // 点击瞬间复制全部搜索结果；修改成员后筛选结果变化也不会漏项。
+            ImGui::BeginDisabled(!service.store.writable || ranked.empty());
+            int batchAction = 0;
+            if (ImGui::Button((std::string(Tr("Select all results", "选取全部结果")) + " (" + std::to_string(ranked.size()) + ")").c_str())) batchAction = 1;
+            ImGui::SameLine();
+            if (ImGui::Button((std::string(Tr("Deselect all results", "取消选取全部结果")) + " (" + std::to_string(ranked.size()) + ")").c_str())) batchAction = -1;
+            ImGui::EndDisabled();
+            if (quickAction == QuickAction::None && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Tr("Working outfits replace conflicting slots; groups keep all members.", "工作搭配会替换冲突槽位；服装组则保留全部成员。"));
+            if (batchAction)
+            {
+                std::vector<std::string> keys;
+                for (const auto& [index, score] : ranked) keys.push_back(service.catalog[index].key);
+                service.BeginBatch();
+                for (const auto& key : keys)
+                {
+                    const auto* entry = service.Find(key); if (!entry) continue;
+                    if (quickAction == QuickAction::None) { if (batchAction > 0) service.Add(key); else service.Remove(key); }
+                    else if (quickAction == QuickAction::Add || quickAction == QuickAction::Remove)
+                        service.SetGroupItem(quickAction == QuickAction::Add ? quickGroup : CurrentGroup(), *entry, batchAction > 0);
+                    else
+                    {
+                        auto& item = service.store.database["items"][key]; if (!item.is_object()) item = Json::object();
+                        if (batchAction > 0) item["part"] = PartIDs[quickPart];
+                        else if (item.value("part", "") == PartIDs[quickPart]) item.erase("part");
+                    }
+                }
+                service.EndBatch(quickAction == QuickAction::None);
+                // 本帧剩余绘制使用原始索引快照，下一帧按新 revision 重建结果。
+            }
             ImGui::TextDisabled("%zu %s", ranked.size(), Tr("items; click adds, double-click applies, right-click edits", "件；单击加入搭配，双击应用，右键编辑"));
             std::vector<std::string> references;
             if (const auto* group = service.Group(CurrentGroup()))
@@ -721,46 +750,70 @@ namespace Wardrobe
             if (ImGui::Selectable(label, view == kind && viewID == id)) { view = kind; viewID = id; }
         }
 
+        #include "wardrobe/PanelNavigation.inc"
+
         void DrawSidebar()
         {
             auto& service = Service::Get();
             auto& database = service.store.database;
-            ImGui::InputTextWithHint("##view search", Tr("Find categories / pinyin", "搜索分类 / 拼音"), &sidebarSearch);
+            ImGui::InputTextWithHint("##view search", Tr("Find groups / pinyin", "搜索服装组 / 拼音"), &sidebarSearch);
             ViewButton(Tr("All clothing", "全部服装"), View::All);
             ViewButton("★ Favorites", View::Favorites);
             ViewButton(Tr("Uncategorized", "未分类"), View::Uncategorized);
             ViewButton(Tr("Working outfit", "工作搭配"), View::Working);
-            ImGui::SeparatorText(Tr("Categories", "分类"));
-            for (const auto& [id, category] : database["categories"].items())
+            ImGui::Separator();
+            // 固定入口不参与滚动，下面三个分区只共用一个滚动容器。
+            ImGui::BeginChild("Scrollable group navigation", ImVec2(0, 0));
+            const auto drawEntry = [&](const std::string& key, const std::string& directory, bool draggable)
             {
-                if (!sidebarSearch.empty() && !SearchScore(sidebarSearch, id) && !SearchMetadata(sidebarSearch, category)) continue;
-                ImGui::PushID(id.c_str());
-                ViewButton(ObjectName(id, category).c_str(), View::Category, id);
-                if (ImGui::BeginPopupContextItem("Category menu"))
+                const auto* metadata = service.Group(key);
+                if (!metadata || !MatchesGroupSearch(SplitGroupID(key).second, *metadata, sidebarSearch)) return;
+                ImGui::PushID(key.c_str());
+                const auto [collection, id] = SplitGroupID(key);
+                std::string label = ObjectName(id, *metadata);
+                if (collection == "pluginCategories") label += " (" + std::to_string(service.plugins.contains(id) ? service.plugins.at(id) : 0) + ")";
+                ViewButton(label.c_str(), collection == "categories" ? View::Category : collection == "groups" ? View::Group : View::Plugin, id);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", key.c_str());
+                if (draggable) NavigationDrag(key, directory);
+                else if (service.store.writable && ImGui::BeginDragDropSource())
                 {
-                    if (ImGui::MenuItem(Tr("Edit category", "编辑分类")))
-                    { categoryID = id; categoryName = ObjectName(id, category); categorySearch = Join(category.value("search", Json::array())); selectMetadata = true; }
-                    ImGui::EndPopup();
+                    ImGui::SetDragDropPayload("SW_NAV", key.c_str(), key.size() + 1);
+                    ImGui::TextUnformatted(label.c_str()); ImGui::EndDragDropSource();
                 }
-                ImGui::PopID();
-            }
-            ImGui::SeparatorText(Tr("Registered plugins", "已注册插件"));
-            for (const auto& [id, plugin] : database["pluginCategories"].items())
+                NavigationMenu(key); ImGui::PopID();
+            };
+            if (NavigationHeader("section:categories", Tr("Category groups", "分类服装组"), !sidebarSearch.empty()))
             {
-                if (!plugin.value("enabled", true)) continue;
-                if (!sidebarSearch.empty() && !SearchScore(sidebarSearch, id) && !SearchMetadata(sidebarSearch, plugin)) continue;
-                ImGui::PushID(id.c_str());
-                const auto count = service.plugins.contains(id) ? service.plugins.at(id) : 0;
-                ViewButton((ObjectName(id, plugin) + " (" + std::to_string(count) + ")").c_str(), View::Plugin, id);
-                ImGui::PopID();
+                ImGui::Indent(ImGui::GetFontSize() * 0.55f);
+                for (const auto& key : NavigationIDs("category")) drawEntry(key, "", true);
+                ImGui::Unindent(ImGui::GetFontSize() * 0.55f);
             }
-            ImGui::SeparatorText(Tr("Other outfit groups", "其他服装组"));
-            for (const auto& [id, metadata] : database["groups"].items())
+            ImGui::SeparatorText(Tr("Outfit groups", "服装组"));
+            const auto drawDirectory = [&](const std::string& id, const std::string& name)
             {
-                if (!sidebarSearch.empty() && !SearchScore(sidebarSearch, id) && !SearchMetadata(sidebarSearch, metadata)) continue;
-                ViewButton((ObjectName(id, metadata) + "##group-" + id).c_str(), View::Group, id);
-            }
+                auto ids = NavigationIDs("group", id);
+                const bool matched = std::any_of(ids.begin(), ids.end(), [&](const auto& key)
+                { const auto* metadata = service.Group(key); return metadata && MatchesGroupSearch(SplitGroupID(key).second, *metadata, sidebarSearch); });
+                const bool nameMatched = !sidebarSearch.empty() && SearchScore(sidebarSearch, name) > 0;
+                if (!sidebarSearch.empty() && !matched && !nameMatched) return;
+                const auto key = id.empty() ? "section:unsorted" : "directory:" + id;
+                const bool open = NavigationHeader(key, name + " (" + std::to_string(ids.size()) + ")", !sidebarSearch.empty());
+                NavigationDrag(key, id, true);
+                if (!id.empty()) NavigationMenu(key);
+                if (open)
+                {
+                    ImGui::Indent(ImGui::GetFontSize() * 0.55f);
+                    const auto savedSearch = sidebarSearch;
+                    if (nameMatched) sidebarSearch.clear();
+                    for (const auto& group : ids) drawEntry(group, id, true);
+                    sidebarSearch = savedSearch;
+                    ImGui::Unindent(ImGui::GetFontSize() * 0.55f);
+                }
+            };
+            for (const auto& key : NavigationIDs("directory")) drawDirectory(key.substr(10), NavigationName(key));
+            drawDirectory("", Tr("Unsorted", "未整理"));
             ImGui::BeginDisabled(!service.store.writable);
+            if (ImGui::Button(Tr("New directory", "新建目录"))) { editingDirectory.clear(); directoryName.clear(); openDirectoryEditor = true; }
             if (ImGui::Button(Tr("New outfit group", "新建服装组")))
             {
                 std::string id;
@@ -769,7 +822,28 @@ namespace Wardrobe
                 service.Save(); NavigateGroup("groups:" + id); StartGroupEdit("groups:" + id);
             }
             ImGui::EndDisabled();
+            const bool pluginsOpen = NavigationHeader("section:plugins", Tr("Registered plugins", "已注册模组"), !sidebarSearch.empty());
+            NavigationDrag("section:plugins", "@registered", true);
+            if (pluginsOpen)
+            {
+                ImGui::Indent(ImGui::GetFontSize() * 0.55f);
+                for (const auto& [id, plugin] : database["pluginCategories"].items())
+                    if (plugin.value("enabled", true) && !database["navigation"]["placements"].contains("pluginCategories:" + id))
+                        drawEntry("pluginCategories:" + id, "@registered", false);
+                ImGui::Unindent(ImGui::GetFontSize() * 0.55f);
+            }
+            if (ImGui::GetDragDropPayload() && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
+            {
+                const float y = ImGui::GetMousePos().y;
+                const float top = ImGui::GetWindowPos().y, bottom = top + ImGui::GetWindowSize().y;
+                const float speed = ImGui::GetFontSize() * 18 * ImGui::GetIO().DeltaTime;
+                if (y < top + ImGui::GetFontSize() * 1.5f) ImGui::SetScrollY(std::max(0.0f, ImGui::GetScrollY() - speed));
+                else if (y > bottom - ImGui::GetFontSize() * 1.5f) ImGui::SetScrollY(ImGui::GetScrollY() + speed);
+            }
+            ImGui::EndChild();
         }
+
+        #include "wardrobe/PanelActors.inc"
 
         void DrawWorking()
         {
@@ -779,7 +853,13 @@ namespace Wardrobe
             if (presets.contains(service.activePreset)) title = ObjectName(service.activePreset, presets[service.activePreset]);
             if (service.Dirty()) title += " *";
             ImGui::TextWrapped("%s", title.c_str());
-            ImGui::Checkbox(Tr("Live preview", "实时预览"), &service.livePreview);
+            bool preview = service.livePreview;
+            if (ImGui::Checkbox(Tr("Live preview", "实时预览"), &preview)) service.SetLivePreview(preview);
+            if (service.ActorProfile().value("automatic", false))
+            {
+                ImGui::TextDisabled("%s", service.ActorProfile().value("manual", false) ? Tr("Manual outfit; automatic paused", "手动搭配 · 自动换装暂缓") : Tr("Automatic outfits active", "自动换装已启用"));
+                if (ImGui::Button(Tr("Resume automatic", "恢复自动"))) service.ResumeAutomatic();
+            }
             const char* equipmentModes[] = {Tr("Off", "关闭"), Tr("Shoes only", "仅鞋子装备"), Tr("Equip all", "全部装备")};
             auto equipmentMode = static_cast<int>(service.EquipmentMode());
             ImGui::BeginDisabled(!service.store.writable);
@@ -829,67 +909,63 @@ namespace Wardrobe
         {
             auto& service = Service::Get();
             auto& presets = service.store.database["presets"];
+            DrawActorSelector();
+            ImGui::BeginDisabled(!service.store.writable);
+            bool automaticOutfits = service.ActorProfile().value("automatic", false);
+            if (ImGui::Checkbox(Tr("Automatic outfits for this actor", "为当前角色启用自动换装"), &automaticOutfits)) service.SetAutomatic(automaticOutfits);
             ImGui::InputTextWithHint("##preset search", Tr("Search presets / pinyin", "搜索预设 / 拼音"), &presetSearch);
-            std::string selection;
+            std::string selected;
             for (const auto& [id, preset] : presets.items())
             {
-                if (!presetSearch.empty() && !SearchMetadata(presetSearch, preset) && !SearchScore(presetSearch, id)) continue;
-                if (ImGui::Selectable((ObjectName(id, preset) + "##" + id).c_str(), service.activePreset == id)) selection = id;
+                if (preset.value("actor", "player") != service.currentActor || !MatchesGroupSearch(id, preset, presetSearch)) continue;
+                if (ImGui::Selectable((ObjectName(id, preset) + "##" + id).c_str(), service.activePreset == id)) selected = id;
             }
-            if (!selection.empty())
+            if (!selected.empty())
             {
-                service.SelectPreset(selection);
-                presetName = ObjectName(selection, presets[selection]);
-                presetKeys = Join(presets[selection].value("search", Json::array()));
+                service.ActivatePreset(selected);
+                presetName = ObjectName(selected, presets[selected]);
+                presetKeys = Join(presets[selected].value("search", Json::array()));
             }
-            ImGui::BeginDisabled(!presets.contains(service.activePreset));
-            if (ImGui::Button(Tr("Apply selected preset", "应用选中预设")))
-            {
-                service.SelectPreset(service.activePreset);
-                if (!service.livePreview) service.Apply();
-            }
-            ImGui::EndDisabled();
-            if (presets.contains(service.activePreset))
-            {
-                auto group = presets[service.activePreset].value("group", "");
-                if (ImGui::BeginCombo(Tr("Outfit group", "预设使用的服装组"), group.c_str()))
-                {
-                    for (const char* collection : {"categories", "pluginCategories", "groups"})
-                        for (const auto& [id, metadata] : service.store.database[collection].items())
-                            if (ImGui::Selectable((ObjectName(id, metadata) + "##preset-" + collection + id).c_str()))
-                            { presets[service.activePreset]["group"] = std::string(collection) + ":" + id; service.Save(); }
-                    ImGui::EndCombo();
-                }
-            }
+            const auto runtime = service.ActorProfile().value("runtime", Json::object());
+            if (runtime.contains("state")) ImGui::Text("%s: %s", StateName(runtime.value("state", "default")), NavigationName(runtime.value("group", "" )).c_str());
+            if (!runtime.value("error", "").empty()) ImGui::TextWrapped("%s", runtime.value("error", "").c_str());
+            if (ImGui::Button(Tr("Resume / retry automatic", "恢复 / 重试自动换装"))) service.ResumeAutomatic();
             ImGui::Separator();
             EditText(Tr("Preset name", "预设名称"), presetName);
             EditText(Tr("Preset search keys", "预设搜索词（每行一个）"), presetKeys, 65);
-            ImGui::BeginDisabled(!service.store.writable || presetName.empty());
-            if (ImGui::Button(Tr("Save working outfit as new", "将工作搭配保存为新预设")))
+            ImGui::BeginDisabled(presetName.empty());
+            if (ImGui::Button(Tr("New preset from working outfit", "从工作搭配新建预设")))
             {
                 const auto id = NewID(presets, "preset-");
-                presets[id] = {{"name", presetName}, {"search", Split(presetKeys)}, {"items", service.working}};
-                const auto groupID = "groups:" + id;
-                service.store.database["groups"][id] = {{"name", presetName}, {"items", service.working}};
-                presets[id]["group"] = groupID;
-                service.activePreset = id; service.Save();
+                auto groupID = "preset-" + id;
+                while (service.store.database["groups"].contains(groupID)) groupID += "-1";
+                service.store.database["groups"][groupID] = {{"name", presetName}, {"items", service.working}};
+                presets[id] = {{"name", presetName}, {"search", Split(presetKeys)}, {"actor", service.currentActor}, {"group", "groups:" + groupID},
+                    {"rules", {{"default", {{"enabled", true}, {"mode", "single"}, {"groups", {"groups:" + groupID}}}}}}};
+                service.ActivatePreset(id); service.Save();
             }
-            ImGui::BeginDisabled(!presets.contains(service.activePreset));
-            if (ImGui::Button(Tr("Rename / update search keys", "更新当前预设名称 / 搜索词")))
+            ImGui::EndDisabled();
+            if (presets.contains(service.activePreset) && presets[service.activePreset].value("actor", "player") == service.currentActor)
             {
-                presets[service.activePreset]["name"] = presetName;
-                presets[service.activePreset]["search"] = Split(presetKeys); service.Save();
+                if (ImGui::Button(Tr("Rename / update search keys", "更新名称 / 搜索词")))
+                { presets[service.activePreset]["name"] = presetName; presets[service.activePreset]["search"] = Split(presetKeys); service.Save(); }
+                ImGui::SameLine();
+                if (ImGui::Button(Tr("Apply default group", "手动应用默认服装组"))) service.SelectPreset(service.activePreset);
+                ImGui::SameLine();
+                if (ImGui::Button(Tr("Delete preset", "删除预设"))) ImGui::OpenPopup(Tr("Delete preset?", "删除预设？"));
+                if (ImGui::BeginPopupModal(Tr("Delete preset?", "删除预设？"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+                {
+                    ImGui::TextUnformatted(Tr("Delete preset? Working outfit and groups are retained.", "删除预设？工作搭配和服装组会保留。"));
+                    if (ImGui::Button(Tr("Delete", "删除")))
+                    {
+                        service.SetAutomatic(false); presets.erase(service.activePreset); service.activePreset.clear(); service.Save(); ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine(); if (ImGui::Button(Tr("Cancel", "取消"))) ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
+                }
+                if (presets.contains(service.activePreset)) DrawPresetRules(presets[service.activePreset]);
             }
-            if (ImGui::Button(Tr("Delete current preset", "删除当前预设"))) ImGui::OpenPopup(Tr("Delete preset?", "删除预设？"));
-            ImGui::EndDisabled(); ImGui::EndDisabled();
-            if (ImGui::BeginPopupModal(Tr("Delete preset?", "删除预设？"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-            {
-                ImGui::TextWrapped("%s", Tr("Delete the saved preset? The working outfit is retained.", "删除已保存预设？当前工作搭配会保留。"));
-                if (ImGui::Button(Tr("Delete", "删除")))
-                { presets.erase(service.activePreset); service.activePreset.clear(); service.Save(); ImGui::CloseCurrentPopup(); }
-                ImGui::SameLine(); if (ImGui::Button(Tr("Cancel", "取消"))) ImGui::CloseCurrentPopup();
-                ImGui::EndPopup();
-            }
+            ImGui::EndDisabled();
         }
 
         void DrawManagement()
@@ -1003,6 +1079,7 @@ namespace Wardrobe
     void ProcessUiRequests()
     {
         Service::Get().PollSave();
+        Service::Get().TickActors();
         std::vector<std::pair<std::string, std::string>> pending;
         { std::lock_guard lock(commandMutex); pending.swap(commands); }
         // 保留打开面板查看错误的入口，但不执行控制台排队的功能命令。
@@ -1016,9 +1093,9 @@ namespace Wardrobe
             {
                 std::string found;
                 for (const auto& [id, preset] : service.store.database["presets"].items())
-                    if (Normalize(id) == Normalize(argument) || Normalize(ObjectName(id, preset)) == Normalize(argument)) { found = id; break; }
+                    if (preset.value("actor", "player") == service.currentActor && (Normalize(id) == Normalize(argument) || Normalize(ObjectName(id, preset)) == Normalize(argument))) { found = id; break; }
                 if (found.empty()) service.status = "Preset not found: " + argument;
-                else { service.SelectPreset(found); service.Apply(); }
+                else { service.SelectPreset(found); if (!service.livePreview && service.Group(service.store.database["presets"][found].value("group", ""))) service.Apply(); }
             }
         }
     }
@@ -1057,8 +1134,12 @@ namespace Wardrobe
         }
         else if (shortcut.action == "preset" || shortcut.action == "applyPreset")
         {
-            service.SelectPreset(shortcut.target);
-            if (shortcut.action == "applyPreset" && !service.livePreview) service.Apply();
+            if (shortcut.action == "preset") service.ActivatePreset(shortcut.target);
+            else
+            {
+                service.SelectPreset(shortcut.target);
+                if (!service.livePreview) service.Apply();
+            }
             view = View::Working; viewID.clear(); search.clear();
         }
         else if (shortcut.action == "useGroup")
@@ -1075,7 +1156,8 @@ namespace Wardrobe
                 const float sidebarWidth = std::min(font * 12, available * 0.22f);
                 const float workingWidth = std::min(font * 16, available * 0.27f);
                 const float browseWidth = std::max(1.0f, available - sidebarWidth - workingWidth - ImGui::GetStyle().ItemSpacing.x * 2);
-                ImGui::BeginChild("Views", ImVec2(sidebarWidth, 0), ImGuiChildFlags_Borders); DrawSidebar(); ImGui::EndChild();
+                DrawActorSelector();
+                ImGui::BeginChild("Views", ImVec2(sidebarWidth, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse); DrawSidebar(); ImGui::EndChild();
                 ImGui::SameLine();
                 ImGui::BeginChild("Browse", ImVec2(browseWidth, 0));
                 if (selectWardrobe) ImGui::SetScrollY(0);
@@ -1083,6 +1165,7 @@ namespace Wardrobe
                 ImGui::SameLine(); ImGui::BeginChild("Working", ImVec2(0, 0), ImGuiChildFlags_Borders); DrawWorking(); ImGui::EndChild();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem(Tr("Actors", "角色管理"))) { DrawActorManagement(); ImGui::EndTabItem(); }
             if (ImGui::BeginTabItem(Tr("Presets", "预设"))) { DrawPresets(); ImGui::EndTabItem(); }
             const auto metadataFlags = selectMetadata ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
             selectMetadata = false;
@@ -1092,5 +1175,6 @@ namespace Wardrobe
         }
         DrawItemEditor();
         DrawGroupEditor();
+        DrawNavigationDialogs();
     }
 }

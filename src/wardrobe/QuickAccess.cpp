@@ -104,7 +104,8 @@ namespace Wardrobe
                 const auto& presets = service.store.database["presets"];
                 if (!presets.contains(target)) return nullptr;
                 const auto& preset = presets[target];
-                return service.Group(preset.value("group", "")) ? &preset : nullptr;
+                if (preset.value("actor", "player") != service.currentActor) return nullptr;
+                return action == "preset" || service.Group(preset.value("group", "")) ? &preset : nullptr;
             }
             const auto [collection, key] = SplitGroupID(target);
             if (action == "category" && collection != "categories") return nullptr;
@@ -172,6 +173,7 @@ namespace Wardrobe
                         (action == 5 && std::string_view(collection) == "presets")) continue;
                     for (const auto& [id, metadata] : database[collection].items())
                     {
+                        if (std::string_view(collection) == "presets" && metadata.value("actor", "player") != Service::Get().currentActor) continue;
                         if (!targetSearch.empty() && !SearchScore(targetSearch, id) && !SearchMetadata(targetSearch, metadata) &&
                             !SearchScore(targetSearch, ObjectName(id, metadata), true)) continue;
                         const auto target = std::string_view(collection) == "presets" ? id : std::string(collection) + ":" + id;

@@ -11,8 +11,10 @@ namespace Wardrobe
 
     void Service::SaveWorking()
     {
-        store.database["workingItems"] = working;
-        store.database["activePreset"] = activePreset;
+        if (batching_) return;
+        StoreActorContext();
+        store.database["workingItems"] = store.database["actors"]["player"]["workingItems"];
+        store.database["activePreset"] = store.database["actors"]["player"]["activePreset"];
         ++revision;
         if (!store.writable) { status = store.error; return; }
         // 穿脱不改变搜索元数据；连续操作只保留最新待写状态，避免全目录重建。
@@ -87,18 +89,26 @@ namespace Wardrobe
     void Service::Reload()
     {
         FlushSave();
+        SosBackend::Get().Reset();
+        for (auto& [key, generation] : actorGeneration_) ++generation;
+        autoBusy_.clear();
+        { std::lock_guard lock(autoMutex_); autoCompletions_.clear(); }
         if (store.Load())
         {
             ClearPinyinSearchCache();
             indexedCategories_ = nullptr;
             indexedPlugins_ = nullptr;
-            working = store.database["workingItems"].get<std::vector<std::string>>();
-            activePreset = store.database["activePreset"].get<std::string>();
+            livePreview = store.database.value("livePreview", true);
+            currentActor = "player";
+            working = ActorProfile()["workingItems"].get<std::vector<std::string>>();
+            activePreset = ActorProfile().value("activePreset", "");
             presetBaseline_ = working;
             undo_ = nullptr;
             status = "JSON loaded";
             RebuildIndex();
             SosBackend::Get().SetEquipmentMode(EquipmentMode());
+            for (const auto& [key, profile] : store.database["actors"].items()) unavailableActors_.insert(key);
+            PublishActorState(store.database["actors"]);
         }
         else { status = store.error; RebuildIndex(); }
     }
@@ -123,6 +133,8 @@ namespace Wardrobe
     bool Service::Save()
     {
         if (!store.writable) { status = store.error; return false; }
+        if (batching_) return true;
+        ValidateLifeData(store.database);
         RebuildIndex();
         // 元数据修改与穿脱共用串行后台写入；返回成功表示已排队，写盘失败由 PollSave 提示。
         SaveWorking();
@@ -226,15 +238,17 @@ namespace Wardrobe
         // 外观覆盖遵从真实 biped 冲突；替换冲突项时只修改工作搭配，不改已保存预设。
         std::erase_if(working, [&](const auto& item) { const auto* other = Find(item); return other && (entry->slots & other->slots) != 0; });
         working.push_back(std::move(key));
+        MarkManual();
         SaveWorking();
-        if (livePreview) Apply();
+        if (livePreview && !batching_) Apply(false, false);
     }
 
     void Service::Remove(std::string_view key)
     {
         if (std::erase(working, std::string(key)) == 0) return;
+        MarkManual();
         SaveWorking();
-        if (livePreview) Apply();
+        if (livePreview && !batching_) Apply(false, false);
     }
 
     const Json* Service::Group(const std::string& id) const
@@ -279,15 +293,12 @@ namespace Wardrobe
     void Service::UseGroup(const std::string& id, bool apply)
     {
         if (!Group(id)) { status = "Group not found: " + id; return; }
-        std::vector<std::pair<std::string, std::uint32_t>> candidates;
-        // 引用仅用于导航，绝不递归收集引用组的服装。
-        for (const auto& entry : catalog) if (InGroup(entry, id)) candidates.emplace_back(entry.key, entry.slots);
-        static std::mt19937 generator(std::random_device{}());
-        working = RandomOutfit(std::move(candidates), generator);
-        activePreset.clear();
+        working = GenerateGroup(id);
+        MarkManual();
+        if (!ActorProfile().value("automatic", false)) activePreset.clear();
         ++revision;
         SaveWorking();
-        if (apply) Apply();
+        if (apply && !batching_) Apply(false, false);
     }
 
     std::string Service::CreateSubgroup(const std::string& parent)
@@ -317,13 +328,15 @@ namespace Wardrobe
 
     void Service::SelectPreset(const std::string& id)
     {
-        if (!store.database["presets"].contains(id)) return;
+        if (!store.database["presets"].contains(id) || store.database["presets"][id].value("actor", "player") != currentActor) return;
         const auto group = store.database["presets"][id].value("group", "");
         if (!Group(group)) { status = "Group not found: " + group; return; }
-        UseGroup(group, false);
+        ActivatePreset(id);
+        working = GenerateGroup(group);
+        MarkManual();
         presetBaseline_ = working;
-        activePreset = id; SaveWorking();
-        if (livePreview) Apply();
+        SaveWorking();
+        if (livePreview && !batching_) Apply(false, false);
     }
 
     void Service::OverwritePreset()
@@ -351,22 +364,332 @@ namespace Wardrobe
         }
     }
 
-    void Service::Apply(bool clear)
+    void Service::Apply(bool clear, bool persist)
     {
-        SosBackend::Get().Request(clear ? std::vector<std::string>{} : working, clear);
+        MarkManual();
+        if (persist) SaveWorking();
+        else StoreActorContext();
+        SosBackend::Get().RequestFor(currentActor, clear ? std::vector<std::string>{} : working, clear,
+            EquipmentMode(), ActorProfile().value("automatic", false));
     }
 
     ActualEquipmentMode Service::EquipmentMode() const
     {
-        return ParseActualEquipmentMode(store.database.value("actualEquipmentMode", std::string("off")));
+        return ParseActualEquipmentMode(store.database["actors"][currentActor].value("actualEquipmentMode", std::string("off")));
     }
 
     void Service::SetEquipmentMode(ActualEquipmentMode mode)
     {
         if (!store.writable) return;
-        store.database["actualEquipmentMode"] = ActualEquipmentModeID(mode);
-        SosBackend::Get().SetEquipmentMode(mode);
+        ActorProfile()["actualEquipmentMode"] = ActualEquipmentModeID(mode);
+        ++actorGeneration_[currentActor];
+        SosBackend::Get().CancelActor(currentActor);
+        if (currentActor == "player") store.database["actualEquipmentMode"] = ActualEquipmentModeID(mode);
+        if (mode == ActualEquipmentMode::Off) SosBackend::Get().CleanupEquipment(currentActor);
         SaveWorking();
+    }
+
+    void Service::StoreActorContext()
+    {
+        auto& profile = ActorProfile();
+        profile["workingItems"] = working;
+        profile["activePreset"] = activePreset;
+        profile["baseline"] = presetBaseline_;
+        PublishActorState(store.database["actors"]);
+    }
+
+    void Service::MarkManual()
+    {
+        if (ActorProfile().value("automatic", false))
+        {
+            if (!ActorProfile().value("manual", false)) ActorProfile()["manualState"] = ActorProfile()["runtime"].value("signature", "");
+            ActorProfile()["manual"] = true;
+        }
+        ++actorGeneration_[currentActor];
+        SosBackend::Get().CancelActor(currentActor);
+    }
+
+    void Service::BeginBatch() { batching_ = true; }
+    void Service::EndBatch(bool preview)
+    {
+        batching_ = false;
+        Save();
+        if (preview && livePreview) Apply(false, false);
+    }
+    void Service::SetLivePreview(bool enabled)
+    {
+        livePreview = enabled; store.database["livePreview"] = enabled; SaveWorking();
+    }
+    void Service::SelectActor(const std::string& key)
+    {
+        if (key == currentActor || !store.database["actors"].contains(key) || !store.database["actors"][key].value("managed", false)) return;
+        StoreActorContext();
+        currentActor = key;
+        working = ActorProfile()["workingItems"].get<std::vector<std::string>>();
+        activePreset = ActorProfile().value("activePreset", "");
+        presetBaseline_ = ActorProfile().value("baseline", working);
+        undo_ = nullptr; ++revision;
+    }
+    void Service::AddActor(const ActorInfo& actor)
+    {
+        if (!store.writable) return;
+        ++actorGeneration_[actor.key]; SosBackend::Get().CancelActor(actor.key);
+        if (!store.database["actors"].contains(actor.key)) store.database["actors"][actor.key] = NewActorProfile(actor.name);
+        store.database["actors"][actor.key]["managed"] = true;
+        store.database["actors"][actor.key]["releasePending"] = false;
+        SelectActor(actor.key); Save();
+    }
+    void Service::RemoveActor(const std::string& key)
+    {
+        if (key == "player" || !store.writable || !store.database["actors"].contains(key)) return;
+        ++actorGeneration_[key];
+        SosBackend::Get().CancelActor(key);
+        if (currentActor == key) SelectActor("player");
+        auto& profile = store.database["actors"][key];
+        profile["managed"] = false; profile["automatic"] = false; profile["manual"] = false;
+        profile["takeoverPending"] = false;
+        profile["releasePending"] = true;
+        Save();
+    }
+    void Service::SetAutomatic(bool enabled)
+    {
+        if (!store.writable) return;
+        ActorProfile()["automatic"] = enabled;
+        ActorProfile()["takeoverPending"] = enabled;
+        ActorProfile()["manual"] = false;
+        ++actorGeneration_[currentActor];
+        SosBackend::Get().CancelActor(currentActor);
+        if (!enabled)
+        {
+            ActorProfile()["releasePending"] = true;
+        }
+        else
+        {
+            ActorProfile()["releasePending"] = false;
+            ActorProfile()["runtime"].erase("signature");
+        }
+        SaveWorking();
+    }
+    void Service::ResumeAutomatic(bool reset)
+    {
+        ActorProfile()["manual"] = false;
+        ActorProfile().erase("manualState");
+        if (reset || !ActorProfile()["runtime"].value("error", "").empty()) ActorProfile()["runtime"].erase("signature");
+        unavailableActors_.insert(currentActor);
+        ++actorGeneration_[currentActor]; SosBackend::Get().CancelActor(currentActor); SaveWorking();
+    }
+    void Service::ActivatePreset(const std::string& id)
+    {
+        if (!store.database["presets"].contains(id) || store.database["presets"][id].value("actor", "player") != currentActor) return;
+        auto& profile = ActorProfile();
+        if (!activePreset.empty()) profile["presetRuntime"][activePreset] = profile["runtime"];
+        activePreset = id;
+        profile["activePreset"] = id;
+        profile["runtime"] = profile.value("presetRuntime", Json::object()).value(id, Json::object());
+        ResumeAutomatic();
+    }
+    std::vector<std::string> Service::GenerateGroup(const std::string& id) const
+    {
+        std::vector<std::pair<std::string, std::uint32_t>> candidates;
+        for (const auto& entry : catalog) if (InGroup(entry, id)) candidates.emplace_back(entry.key, entry.slots);
+        static std::mt19937 generator(std::random_device{}());
+        return RandomOutfit(std::move(candidates), generator);
+    }
+    void Service::ResetActorSession()
+    {
+        for (auto& [key, value] : actorGeneration_) ++value;
+        autoBusy_.clear(); unavailableActors_.clear();
+        equipmentCleanupPending_.clear();
+        for (auto& [key, actor] : store.database["actors"].items())
+        {
+            unavailableActors_.insert(key);
+            if (actor.value("actualEquipmentMode", "off") == "off") equipmentCleanupPending_.insert(key);
+            actor["runtime"] = Json::object(); actor.erase("presetRuntime"); actor["manual"] = false; actor.erase("manualState");
+            actor["takeoverPending"] = actor.value("managed", true) && actor.value("automatic", false);
+        }
+        actorSnapshot = {}; nextActorPoll_ = {};
+        PublishActorState(store.database["actors"]);
+        std::lock_guard lock(autoMutex_); autoCompletions_.clear();
+    }
+    void Service::QueueSessionReset(bool ready)
+    {
+        worldReady_.store(ready);
+        sessionReset_.store(true);
+    }
+
+    void Service::TickActors()
+    {
+        if (sessionReset_.exchange(false)) ResetActorSession();
+        if (!worldReady_.load()) return;
+        if (!SosBackend::Get().IsInstalled() || !store.writable) return;
+        if (auto loaded = TakeLoadedActorState())
+        {
+            // 配置仍共享 JSON；实际结果及轮换进度以正在加载的存档为准。
+            for (auto& [key, profile] : store.database["actors"].items())
+            {
+                if (!loaded->contains(key)) { profile["runtime"] = Json::object(); profile.erase("presetRuntime"); continue; }
+                const auto& saved = (*loaded)[key];
+                for (const auto* field : {"runtime", "presetRuntime", "workingItems", "activePreset", "baseline", "manual", "manualState", "automatic", "actualEquipmentMode", "releasePending"})
+                    if (saved.contains(field)) profile[field] = saved[field];
+                if (!profile.value("managed", true)) { profile["automatic"] = false; profile["releasePending"] = true; }
+                profile["takeoverPending"] = profile.value("managed", true) && profile.value("automatic", false);
+            }
+            working = ActorProfile()["workingItems"].get<std::vector<std::string>>();
+            activePreset = ActorProfile().value("activePreset", "");
+            presetBaseline_ = ActorProfile().value("baseline", working);
+            ++revision;
+            SaveWorking();
+        }
+        std::vector<AutoCompletion> completions;
+        { std::lock_guard lock(autoMutex_); completions.swap(autoCompletions_); }
+        for (auto& result : completions)
+        {
+            autoBusy_.erase(result.actor);
+            if (actorGeneration_[result.actor] != result.generation) continue;
+            auto& profile = store.database["actors"][result.actor];
+            if (result.release || result.takeover)
+            {
+                if (result.success) profile[result.takeover ? "takeoverPending" : "releasePending"] = false;
+                else status = "Unable to restore actor SOS settings; will retry when available";
+                SaveWorking(); continue;
+            }
+            if (result.success) profile["runtime"] = std::move(result.runtime);
+            else profile["runtime"]["signature"] = result.runtime.value("signature", "");
+            profile["runtime"]["error"] = result.success ? "" : "Appearance application failed; retry with Resume automatic";
+            SaveWorking();
+        }
+        if (auto next = TakeActorSnapshot())
+        {
+            actorSnapshot = std::move(*next);
+            for (const auto& actor : actorSnapshot.managed)
+            {
+                if (!store.database["actors"].contains(actor.key)) continue;
+                auto& profile = store.database["actors"][actor.key];
+                if (!actor.name.empty()) profile["name"] = actor.name;
+                if (!actor.ready) { unavailableActors_.insert(actor.key); continue; }
+                if (equipmentCleanupPending_.erase(actor.key) > 0) SosBackend::Get().CleanupEquipment(actor.key);
+                if (profile.value("takeoverPending", false))
+                {
+                    if (!autoBusy_.contains(actor.key))
+                    {
+                        autoBusy_.insert(actor.key);
+                        const auto generation = actorGeneration_[actor.key];
+                        SosBackend::Get().RequestFor(actor.key, {}, false, ActualEquipmentMode::Off, true, true,
+                            [this, key = actor.key, generation](bool success)
+                            {
+                                std::lock_guard lock(autoMutex_);
+                                autoCompletions_.push_back({key, generation, success, Json::object(), false, true});
+                            });
+                    }
+                    continue;
+                }
+                if (profile.value("releasePending", false))
+                {
+                    // 未加载时延迟解除接管，重新加载后再恢复原设置。
+                    if (!autoBusy_.contains(actor.key))
+                    {
+                        autoBusy_.insert(actor.key);
+                        const auto generation = actorGeneration_[actor.key];
+                        const bool clear = !profile.value("managed", true);
+                        SosBackend::Get().RequestFor(actor.key, {}, clear, ActualEquipmentMode::Off, false, !clear,
+                            [this, key = actor.key, generation](bool success)
+                            {
+                                std::lock_guard lock(autoMutex_);
+                                autoCompletions_.push_back({key, generation, success, Json::object(), true});
+                            });
+                    }
+                    continue;
+                }
+                if (profile.value("managed", true)) EvaluateAutomatic(actor);
+            }
+        }
+        if (std::chrono::steady_clock::now() < nextActorPoll_) return;
+        nextActorPoll_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        std::vector<std::string> keys;
+        for (const auto& [key, profile] : store.database["actors"].items())
+            if (profile.value("managed", true) || profile.value("releasePending", false)) keys.push_back(key);
+        RequestActorSnapshot(std::move(keys));
+    }
+
+    void Service::EvaluateAutomatic(const ActorInfo& actor)
+    {
+        auto& profile = store.database["actors"][actor.key];
+        if (!profile.value("automatic", false) || autoBusy_.contains(actor.key)) return;
+        const auto presetID = profile.value("activePreset", "");
+        if (!store.database["presets"].contains(presetID)) return;
+        const auto& preset = store.database["presets"][presetID];
+        if (preset.value("actor", "player") != actor.key) return;
+        auto runtime = profile.value("runtime", Json::object());
+        std::string signature = presetID;
+        for (const auto& state : actor.states) signature += ":" + state;
+        const bool reload = unavailableActors_.erase(actor.key) > 0;
+        if (profile.value("manual", false))
+        {
+            const auto manualState = profile.value("manualState", "");
+            if (manualState.empty()) { profile["manualState"] = signature; return; }
+            if (manualState == signature) return;
+            profile["manual"] = false; profile.erase("manualState");
+        }
+        if (runtime.value("signature", "") == signature && !reload) return;
+        const auto& rules = preset["rules"];
+        std::string state, group;
+        std::vector<std::string> items;
+        // 重新加载复用已应用结果；短暂战斗结束也复用战斗前结果。
+        if (runtime.value("signature", "") == signature && reload && runtime.contains("items"))
+            items = runtime["items"].get<std::vector<std::string>>();
+        else if (runtime.value("state", "") == "combat" && !actor.states.empty() && actor.states.front() != "combat" &&
+            runtime.contains("resume") && runtime["resume"].value("signature", "") == signature)
+        {
+            runtime = RestoreCombatOutfit(runtime);
+            items = runtime.value("items", std::vector<std::string>{});
+        }
+        else
+        {
+            static std::mt19937 generator(std::random_device{}());
+            for (const auto& candidateState : actor.states)
+            {
+                if (!rules.contains(candidateState) || !rules[candidateState].value("enabled", true)) continue;
+                const auto& rule = rules[candidateState];
+                std::vector<std::string> valid;
+                for (const auto& id : rule["groups"])
+                {
+                    const auto groupID = id.get<std::string>();
+                    const auto* metadata = Group(groupID);
+                    if (!metadata) continue;
+                    if (SplitGroupID(groupID).first == "groups")
+                    {
+                        const auto members = metadata->value("items", std::vector<std::string>{});
+                        if (std::any_of(members.begin(), members.end(), [&](const auto& key) { return !Find(key); })) continue;
+                    }
+                    if (!GenerateGroup(groupID).empty() && std::find(valid.begin(), valid.end(), groupID) == valid.end()) valid.push_back(groupID);
+                }
+                if (valid.empty()) continue;
+                state = candidateState;
+                const auto progress = runtime.value("progress", Json::object()).value(state, Json::object());
+                group = ChooseRuleGroup(rule, valid, progress, generator);
+                items = GenerateGroup(group); break;
+            }
+            if (items.empty())
+            {
+                profile["runtime"]["signature"] = signature;
+                profile["runtime"]["error"] = "No usable outfit group for current conditions"; return;
+            }
+            if (state == "combat" && runtime.value("state", "") != "combat" && runtime.contains("items"))
+            {
+                auto resume = runtime; resume.erase("resume"); runtime["resume"] = std::move(resume);
+            }
+            runtime["state"] = state; runtime["group"] = group;
+            runtime["progress"][state]["last"] = group;
+        }
+        runtime["signature"] = signature; runtime["items"] = items;
+        const auto generation = actorGeneration_[actor.key]; autoBusy_.insert(actor.key);
+        const auto mode = ParseActualEquipmentMode(profile.value("actualEquipmentMode", "off"));
+        SosBackend::Get().RequestFor(actor.key, std::move(items), false, mode, true, false,
+            [this, key = actor.key, generation, runtime = std::move(runtime)](bool success) mutable
+            {
+                std::lock_guard lock(autoMutex_);
+                autoCompletions_.push_back({key, generation, success, std::move(runtime)});
+            });
     }
 
     void OnGameMessage(std::uint32_t type)
@@ -376,11 +699,12 @@ namespace Wardrobe
         if (type == SKSE::MessagingInterface::kPreLoadGame || type == SKSE::MessagingInterface::kNewGame)
         {
             SosBackend::Get().Reset();
+            Service::Get().QueueSessionReset(type == SKSE::MessagingInterface::kNewGame);
         }
         if (type == SKSE::MessagingInterface::kPostLoadGame)
         {
             // 当前设置为关闭时，读档后也回收该存档中记录的临时物品。
-            SosBackend::Get().SetEquipmentMode(Service::Get().EquipmentMode());
+            Service::Get().QueueSessionReset(true);
         }
     }
 }
