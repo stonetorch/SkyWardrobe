@@ -95,6 +95,68 @@ namespace Wardrobe
         return result;
     }
 
+    class AutomaticStateFilter
+    {
+    public:
+        std::vector<std::string> Observe(const std::vector<std::string>& observed)
+        {
+            std::vector<std::string> result;
+            for (std::size_t i = 0; i < OutfitStates.size(); ++i)
+            {
+                const bool value = std::find(observed.begin(), observed.end(), OutfitStates[i]) != observed.end();
+                // 各状态独立去抖，两次连续采样才确认变化；低优先级噪声不会阻塞战斗状态。
+                if (!initialized_) stable_[i] = value;
+                else if (value == stable_[i]) pending_[i] = false;
+                else if (pending_[i]) { stable_[i] = value; pending_[i] = false; }
+                else pending_[i] = true;
+                if (stable_[i]) result.emplace_back(OutfitStates[i]);
+            }
+            initialized_ = true;
+            return result;
+        }
+    private:
+        bool initialized_{};
+        std::array<bool, OutfitStates.size()> stable_{}, pending_{};
+    };
+
+    inline std::string AdoptAutomaticRule(const LifeJson& rules, const std::vector<std::string>& states)
+    {
+        // 条件采纳只看稳定状态与启用设置，不访问服装组、成员或随机器。
+        for (const auto& state : states)
+            if (rules.contains(state) && rules[state].value("enabled", true)) return state;
+        return {};
+    }
+
+    struct AutomaticRuleSelection
+    {
+        std::string state;
+        std::vector<std::string> groups;
+        bool useWorking{};
+    };
+
+    template<class IsUsable>
+    AutomaticRuleSelection ResolveAutomaticRule(const LifeJson& db, const LifeJson& rules,
+        const std::vector<std::string>& states, IsUsable isUsable)
+    {
+        for (const auto& state : states)
+        {
+            if (!rules.contains(state) || !rules[state].value("enabled", true)) continue;
+            const auto& rule = rules[state];
+            if (rule.value("useWorking", false)) return {state, {}, true};
+            std::vector<std::string> valid;
+            for (const auto& id : RuleCandidates(db, rule))
+                if (std::find(valid.begin(), valid.end(), id) == valid.end() && isUsable(id)) valid.push_back(id);
+            if (!valid.empty()) return {state, std::move(valid), false};
+        }
+        return {};
+    }
+
+    inline std::string AutomaticRuleSignature(std::string_view preset, const AutomaticRuleSelection& selection)
+    {
+        // 只以最终生效的规则作为状态；被禁用或被高优先级遮住的条件不触发轮换。
+        return std::string(preset) + ":rule:" + selection.state;
+    }
+
     inline void ValidateLifeData(LifeJson& db)
     {
         // 新字段渐进迁移；旧预设和工作搭配完整保留为玩家配置。

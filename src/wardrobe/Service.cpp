@@ -90,6 +90,7 @@ namespace Wardrobe
     {
         FlushSave();
         SosBackend::Get().Reset();
+        automaticStateFilters_.clear();
         for (auto& [key, generation] : actorGeneration_) ++generation;
         autoBusy_.clear();
         { std::lock_guard lock(autoMutex_); autoCompletions_.clear(); }
@@ -332,10 +333,11 @@ namespace Wardrobe
         if (!group) return false;
         const auto [collection, key] = SplitGroupID(id);
         if (collection == "pluginCategories") return Normalize(entry.plugin) == Normalize(key);
-        const auto members = collection == "categories"
-            ? entry.metadata.value("categories", std::vector<std::string>{})
-            : group->value("items", std::vector<std::string>{});
-        return std::find(members.begin(), members.end(), collection == "categories" ? key : entry.key) != members.end();
+        const auto& owner = collection == "categories" ? entry.metadata : *group;
+        const auto members = owner.find(collection == "categories" ? "categories" : "items");
+        if (members == owner.end()) return false;
+        // 查询成员时直接读取 JSON 数组，避免每件衣服都复制整个组列表。
+        return std::find(members->begin(), members->end(), collection == "categories" ? key : entry.key) != members->end();
     }
 
     void Service::SetGroupItem(const std::string& id, const ClothingEntry& entry, bool included)
@@ -593,6 +595,7 @@ namespace Wardrobe
     }
     void Service::ResetActorSession()
     {
+        automaticStateFilters_.clear();
         for (auto& [key, value] : actorGeneration_) ++value;
         autoBusy_.clear(); unavailableActors_.clear();
         equipmentCleanupPending_.clear();
@@ -678,7 +681,7 @@ namespace Wardrobe
                 if (!store.database["actors"].contains(actor.key)) continue;
                 auto& profile = store.database["actors"][actor.key];
                 if (!actor.name.empty()) profile["name"] = actor.name;
-                if (!actor.ready) { unavailableActors_.insert(actor.key); continue; }
+                if (!actor.ready) { unavailableActors_.insert(actor.key); automaticStateFilters_.erase(actor.key); continue; }
                 if (equipmentCleanupPending_.erase(actor.key) > 0) SosBackend::Get().CleanupEquipment(actor.key);
                 if (profile.value("takeoverPending", false))
                 {
@@ -732,14 +735,38 @@ namespace Wardrobe
     void Service::EvaluateAutomatic(const ActorInfo& actor)
     {
         auto& profile = store.database["actors"][actor.key];
-        if (!profile.value("automatic", false) || autoBusy_.contains(actor.key)) return;
+        if (!profile.value("automatic", false)) return;
+        // 第一层：仅处理引擎状态采样与噪声；异步应用期间仍继续观察。
+        const auto stableStates = automaticStateFilters_[actor.key].Observe(actor.states);
+        if (autoBusy_.contains(actor.key)) return;
         const auto presetID = profile.value("activePreset", "");
         if (!store.database["presets"].contains(presetID)) return;
         const auto& preset = store.database["presets"][presetID];
         if (preset.value("actor", "player") != actor.key) return;
+        const auto& rules = preset["rules"];
+        // 第二层：采纳最高优先级已启用条件，身份不受服装组可用性影响。
+        const auto adoptedState = AdoptAutomaticRule(rules, stableStates);
+        const auto signature = std::string(presetID) + ":rule:" + adoptedState;
+        // 稳态在复制运行记录前返回；这里不读取成员、不保存、不提交后端请求。
+        if (profile.value("manual", false) && profile.value("manualState", "") == signature) return;
+        if (!profile.value("manual", false) && profile["runtime"].value("signature", "") == signature &&
+            !unavailableActors_.contains(actor.key)) return;
         auto runtime = profile.value("runtime", Json::object());
-        std::string signature = presetID;
-        for (const auto& state : actor.states) signature += ":" + state;
+        // 兼容旧存档的全条件签名，保留已应用搭配与轮换进度。
+        if (runtime.contains("items") && runtime.value("state", "") == adoptedState &&
+            runtime.value("signature", "").starts_with(presetID + ":") &&
+            !runtime.value("signature", "").starts_with(presetID + ":rule:"))
+        {
+            runtime["signature"] = signature; profile["runtime"]["signature"] = signature;
+            if (profile.value("manual", false)) profile["manualState"] = signature;
+        }
+        if (runtime.contains("resume"))
+        {
+            auto& resume = runtime["resume"];
+            if (resume.value("signature", "").starts_with(presetID + ":") &&
+                !resume.value("signature", "").starts_with(presetID + ":rule:"))
+                resume["signature"] = std::string(presetID) + ":rule:" + resume.value("state", "");
+        }
         const bool reload = unavailableActors_.erase(actor.key) > 0;
         if (profile.value("manual", false))
         {
@@ -749,13 +776,12 @@ namespace Wardrobe
             profile["manual"] = false; profile.erase("manualState");
         }
         if (runtime.value("signature", "") == signature && !reload) return;
-        const auto& rules = preset["rules"];
         std::string state, group;
         std::vector<std::string> items;
         // 重新加载复用已应用结果；短暂战斗结束也复用战斗前结果。
         if (runtime.value("signature", "") == signature && reload && runtime.contains("items"))
             items = runtime["items"].get<std::vector<std::string>>();
-        else if (runtime.value("state", "") == "combat" && !actor.states.empty() && actor.states.front() != "combat" &&
+        else if (runtime.value("state", "") == "combat" && adoptedState != "combat" &&
             runtime.contains("resume") && runtime["resume"].value("signature", "") == signature)
         {
             runtime = RestoreCombatOutfit(runtime);
@@ -763,35 +789,29 @@ namespace Wardrobe
         }
         else
         {
-            static std::mt19937 generator(std::random_device{}());
-            bool useWorking = false;
-            for (const auto& candidateState : actor.states)
+            // 第三层：只有采纳状态改变或显式重新应用，才解析成员并生成搭配。
+            const auto selection = ResolveAutomaticRule(store.database, rules, stableStates, [&](const std::string& groupID)
             {
-                if (!rules.contains(candidateState) || !rules[candidateState].value("enabled", true)) continue;
-                const auto& rule = rules[candidateState];
-                // 命中工作搭配规则即终止匹配；空工作搭配也不能回落到低优先级规则。
-                if (rule.value("useWorking", false))
+                const auto* metadata = Group(groupID);
+                if (!metadata) return false;
+                if (SplitGroupID(groupID).first == "groups")
                 {
-                    state = candidateState; useWorking = true;
-                    items = profile.value("workingItems", std::vector<std::string>{}); break;
+                    const auto members = metadata->value("items", std::vector<std::string>{});
+                    if (std::any_of(members.begin(), members.end(), [&](const auto& key) { return !Find(key); })) return false;
+                    return !members.empty();
                 }
-                std::vector<std::string> valid;
-                for (const auto& groupID : RuleCandidates(store.database, rule))
-                {
-                    const auto* metadata = Group(groupID);
-                    if (!metadata) continue;
-                    if (SplitGroupID(groupID).first == "groups")
-                    {
-                        const auto members = metadata->value("items", std::vector<std::string>{});
-                        if (std::any_of(members.begin(), members.end(), [&](const auto& key) { return !Find(key); })) continue;
-                    }
-                    if (!GenerateGroup(groupID).empty() && std::find(valid.begin(), valid.end(), groupID) == valid.end()) valid.push_back(groupID);
-                }
-                if (valid.empty()) continue;
-                state = candidateState;
+                // 判断候选可用性不消耗随机数，抽取只发生在有效状态切换后。
+                return std::any_of(catalog.begin(), catalog.end(), [&](const auto& entry) { return InGroup(entry, groupID); });
+            });
+            static std::mt19937 generator(std::random_device{}());
+            const bool useWorking = selection.useWorking;
+            state = selection.state;
+            if (useWorking) items = profile.value("workingItems", std::vector<std::string>{});
+            else if (!state.empty())
+            {
                 const auto progress = runtime.value("progress", Json::object()).value(state, Json::object());
-                group = ChooseRuleGroup(rule, valid, progress, generator);
-                items = GenerateGroup(group); break;
+                group = ChooseRuleGroup(rules[state], selection.groups, progress, generator);
+                items = GenerateGroup(group);
             }
             if (items.empty() && !useWorking)
             {
@@ -802,6 +822,7 @@ namespace Wardrobe
             {
                 auto resume = runtime; resume.erase("resume"); runtime["resume"] = std::move(resume);
             }
+            SKSE::log::info("Automatic outfit {}: rule {} -> {}, group {}", actor.key, runtime.value("state", ""), state, group);
             runtime["state"] = state; runtime["group"] = group; runtime["useWorking"] = useWorking;
             if (!useWorking) runtime["progress"][state]["last"] = group;
         }

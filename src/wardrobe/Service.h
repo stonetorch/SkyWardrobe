@@ -46,6 +46,9 @@ namespace Wardrobe
         void RemoveActor(const std::string& key);
         void SetAutomatic(bool enabled);
         void ResumeAutomatic(bool reset = false);
+        /**
+         * @return 增强功能-多预设 是否启用
+         */
         bool MultiplePresets() const { return store.database.value("multiplePresets", false); }
         void SetMultiplePresets(bool enabled);
         void ActivatePreset(const std::string& id);
@@ -87,6 +90,7 @@ namespace Wardrobe
         void MarkManual();
         std::vector<std::string> GenerateGroup(const std::string& id) const;
         void EvaluateAutomatic(const ActorInfo& actor);
+        std::map<std::string, AutomaticStateFilter> automaticStateFilters_;
         bool batching_{};
         std::atomic<bool> sessionReset_{false}, worldReady_{true};
         std::chrono::steady_clock::time_point nextActorPoll_{};

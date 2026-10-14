@@ -102,8 +102,9 @@ namespace Wardrobe
             if (!ui || ui->IsMenuOpen(RE::BSFixedString("Main Menu")) || ui->GameIsPaused()) return;
             for (const auto& key : keys)
             {
-                SosBackend::Get().RefreshLayers(key);
-                next.managed.push_back(Describe(ResolveActor(key), key, true));
+                auto info = Describe(ResolveActor(key), key, true);
+                if (info.ready) SosBackend::Get().RefreshLayers(key, info.equipment);
+                next.managed.push_back(std::move(info));
             }
             if (auto* processes = RE::ProcessLists::GetSingleton())
                 processes->ForEachHighActor([&](RE::Actor* actor)

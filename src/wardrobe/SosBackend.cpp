@@ -233,11 +233,9 @@ namespace Wardrobe
         activeLayers_[actor] = {{actor, std::move(keys), false, automatic, false, mode, {}, actorVersions_[actor], std::move(layers)}, std::move(equipment)};
     }
 
-    void SosBackend::RefreshLayers(const std::string& actor)
+    void SosBackend::RefreshLayers(const std::string& actor, const std::vector<LayerItem>& equipment)
     {
-        auto* target = ResolveActor(actor);
-        if (!target || !target->Is3DLoaded()) return;
-        auto equipment = ReadOriginalEquipment(target);
+        // 复用本轮角色快照中的装备，避免轮询时重复扫描同一物品栏。
         RequestData request;
         {
             std::lock_guard lock(mutex_);
@@ -245,7 +243,7 @@ namespace Wardrobe
             if (busy_ || it == activeLayers_.end() || !pending_.empty() || it->second.equipment == equipment) return;
             request = it->second.request;
             // 轮询合并装备变化，不推进自动换装的随机或顺序进度。
-            it->second.equipment = std::move(equipment);
+            it->second.equipment = equipment;
         }
         RequestFor(actor, request.keys, false, request.mode, request.automatic, false, {}, request.layers);
     }

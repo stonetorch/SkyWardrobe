@@ -927,7 +927,10 @@ namespace Wardrobe
                     ImGui::SameLine(); if (ImGui::Button(Tr("Cancel", "取消"))) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
                 }
-                if (presets.contains(service.activePreset)) DrawPresetRules(presets[service.activePreset]);
+                if (presets.contains(service.activePreset)) {
+                    ImGui::NewLine();
+                    DrawPresetRules(presets[service.activePreset]);
+                }
             }
             ImGui::EndDisabled();
         }

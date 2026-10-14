@@ -81,6 +81,52 @@ int main()
         Require(ChooseRuleGroup(rule, {}, LifeJson::object(), generator).empty(), "No candidate preserves appearance");
         rule["mode"] = "single";
         Require(ChooseRuleGroup(rule, {"a", "b"}, {{"last", "a"}}, generator) == "a", "Single uses first valid candidate");
+        LifeJson stableRules = {
+            {"combat", {{"enabled", false}, {"mode", "sequence"}, {"groups", {"battle"}}}},
+            {"city", {{"enabled", true}, {"mode", "sequence"}, {"groups", {"a", "b"}}}},
+            {"default", {{"enabled", true}, {"mode", "sequence"}, {"groups", {"c"}}}}};
+        const auto usable = [](const std::string& id) { return id != "missing"; };
+        auto selected = ResolveAutomaticRule(db, stableRules, {"city", "default"}, usable);
+        const auto citySignature = AutomaticRuleSignature("old", selected);
+        Require(selected.state == "city", "Highest usable rule selected");
+        Require(AutomaticRuleSignature("old", ResolveAutomaticRule(db, stableRules, {"combat", "city", "town", "default"}, usable)) == citySignature,
+            "Disabled combat and lower priority town flags do not trigger a city rotation");
+        AutomaticStateFilter stateFilter;
+        std::string previousSignature, last;
+        int rotations = 0, groupChecks = 0;
+        const auto poll = [&](const std::vector<std::string>& states)
+        {
+            const auto stable = stateFilter.Observe(states);
+            const auto adopted = AdoptAutomaticRule(stableRules, stable);
+            const auto signature = std::string("old:rule:") + adopted;
+            if (signature == previousSignature) return;
+            previousSignature = signature; ++rotations;
+            const auto selection = ResolveAutomaticRule(db, stableRules, stable, [&](const std::string& id)
+            { ++groupChecks; return usable(id); });
+            last = ChooseRuleGroup(stableRules[selection.state], selection.groups, {{"last", last}}, generator);
+        };
+        for (int i = 0; i < 500; ++i) poll(i % 2 ? std::vector<std::string>{"combat", "city", "town", "default"} : std::vector<std::string>{"city", "default"});
+        Require(rotations == 1 && last == "a" && groupChecks == 2, "500 stable polls resolve members only once");
+        poll({"city", "default"});
+        stableRules["combat"]["enabled"] = true;
+        poll({"combat", "city", "default"});
+        Require(rotations == 1, "One noisy combat sample does not apply");
+        poll({"city", "default"});
+        Require(rotations == 1, "Combat blip is discarded");
+        poll({"combat", "city", "default"});
+        poll({"combat", "city", "default"});
+        Require(rotations == 2 && last == "battle", "Confirmed combat entry triggers one application");
+        const auto checksAfterCombat = groupChecks;
+        for (int i = 0; i < 500; ++i) poll(i % 2 ? std::vector<std::string>{"combat", "default"} : std::vector<std::string>{"combat", "city", "default"});
+        Require(rotations == 2 && groupChecks == checksAfterCombat, "Lower priority noise does not resolve members or apply");
+        Require(AdoptAutomaticRule({{"combat", {{"enabled", true}}}}, {"combat", "default"}) == "combat", "Condition adoption requires no group configuration");
+        stableRules["combat"]["useWorking"] = true;
+        selected = ResolveAutomaticRule(db, stableRules, {"combat", "city", "default"}, usable);
+        Require(selected.state == "combat" && selected.useWorking && selected.groups.empty(), "Working rule takes priority over all candidate groups");
+        stableRules["combat"]["useWorking"] = false; stableRules["combat"]["groups"] = {"missing"};
+        selected = ResolveAutomaticRule(db, stableRules, {"combat", "city", "default"}, usable);
+        Require(selected.state == "city", "Unusable higher rule falls back to city without triggering a different state");
+        Require(AutomaticRuleSignature("other", selected) != citySignature, "Changing preset is a separate effective state");
         LifeJson combat = {{"state", "combat"}, {"items", {"battle"}}, {"progress", {{"combat", {{"last", "battle-b"}}}}},
             {"resume", {{"state", "city"}, {"items", {"city-outfit"}}, {"progress", {{"combat", {{"last", "battle-a"}}}}}}}};
         const auto restored = RestoreCombatOutfit(combat);

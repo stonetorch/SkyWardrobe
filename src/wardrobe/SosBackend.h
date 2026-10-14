@@ -30,7 +30,7 @@ namespace Wardrobe
         void RequestFor(std::string actor, std::vector<std::string> keys, bool clear,
             ActualEquipmentMode mode, bool automatic = false, bool releaseOnly = false,
             std::function<void(bool)> completion = {}, LayerSettings layers = {});
-        void RefreshLayers(const std::string& actor);
+        void RefreshLayers(const std::string& actor, const std::vector<LayerItem>& equipment);
         void TrackLayers(const std::string& actor, std::vector<std::string> keys, LayerSettings layers,
             ActualEquipmentMode mode, bool automatic, std::vector<LayerItem> equipment);
         void ReleaseActor(std::string actor, bool clear = false);
