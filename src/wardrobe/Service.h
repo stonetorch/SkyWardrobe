@@ -46,6 +46,8 @@ namespace Wardrobe
         void RemoveActor(const std::string& key);
         void SetAutomatic(bool enabled);
         void ResumeAutomatic(bool reset = false);
+        bool MultiplePresets() const { return store.database.value("multiplePresets", false); }
+        void SetMultiplePresets(bool enabled);
         void ActivatePreset(const std::string& id);
         void TickActors();
         void ResetActorSession();

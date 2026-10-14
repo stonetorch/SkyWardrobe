@@ -101,6 +101,7 @@ namespace Wardrobe
             auto& service = Service::Get();
             if (action == "preset" || action == "applyPreset")
             {
+                if (!service.MultiplePresets()) return nullptr;
                 const auto& presets = service.store.database["presets"];
                 if (!presets.contains(target)) return nullptr;
                 const auto& preset = presets[target];
@@ -153,10 +154,18 @@ namespace Wardrobe
             ImGui::SetNextItemWidth(-1);
             if (ImGui::InputText("##label", &label)) draft["label"] = label;
             int action = ActionIndex(draft.value("action", "none"));
+            if (!Service::Get().MultiplePresets() && (action == 3 || action == 4))
+            { action = 0; draft["action"] = "none"; draft["target"] = ""; }
             ImGui::SetNextItemWidth(-1);
-            if (ImGui::Combo(Tr("Action", "操作"), &action, actionNames, static_cast<int>(std::size(actions))))
+            if (ImGui::BeginCombo(Tr("Action", "操作"), actionNames[action]))
             {
-                draft["action"] = actions[action]; draft["target"] = ""; targetSearch.clear();
+                for (int i = 0; i < static_cast<int>(std::size(actions)); ++i)
+                {
+                    if (!Service::Get().MultiplePresets() && (i == 3 || i == 4)) continue;
+                    if (ImGui::Selectable(actionNames[i], action == i))
+                    { action = i; draft["action"] = actions[i]; draft["target"] = ""; targetSearch.clear(); }
+                }
+                ImGui::EndCombo();
             }
             if (action != 0)
             {
@@ -307,6 +316,8 @@ namespace Wardrobe
                         const int index = row * columns + column;
                         const auto cell = index < static_cast<int>(cells.size()) ? cells[index] : Json::object();
                         const auto action = cell.value("action", "none");
+                        // 关闭增强功能时隐藏已有预设快捷按钮，配置保留供重新启用。
+                        if (!Service::Get().MultiplePresets() && (action == "preset" || action == "applyPreset")) continue;
                         const bool empty = action == "none", valid = Target(cell) != nullptr;
                         const auto name = CellName(cell);
                         const auto& icon = FindIcon(cell.value("icon", "folder"));

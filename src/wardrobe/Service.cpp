@@ -134,7 +134,9 @@ namespace Wardrobe
     {
         if (!store.writable) { status = store.error; return false; }
         if (batching_) return true;
+        StoreActorContext();
         ValidateLifeData(store.database);
+        activePreset = ActorProfile().value("activePreset", "");
         RebuildIndex();
         // 元数据修改与穿脱共用串行后台写入；返回成功表示已排队，写盘失败由 PollSave 提示。
         SaveWorking();
@@ -361,7 +363,7 @@ namespace Wardrobe
         if (!Group(id)) { status = "Group not found: " + id; return; }
         working = GenerateGroup(id);
         MarkManual();
-        if (!ActorProfile().value("automatic", false)) activePreset.clear();
+        if (MultiplePresets() && !ActorProfile().value("automatic", false)) activePreset.clear();
         ++revision;
         SaveWorking();
         if (apply && !batching_) Apply(false, false);
@@ -397,6 +399,7 @@ namespace Wardrobe
         if (!store.database["presets"].contains(id) || store.database["presets"][id].value("actor", "player") != currentActor) return;
         const auto group = store.database["presets"][id].value("group", "");
         if (!Group(group)) { status = "Group not found: " + group; return; }
+        if (!MultiplePresets() && id != ActorProfile().value("defaultPreset", "")) return;
         ActivatePreset(id);
         working = GenerateGroup(group);
         MarkManual();
@@ -502,6 +505,7 @@ namespace Wardrobe
         if (!store.writable) return;
         ++actorGeneration_[actor.key]; SosBackend::Get().CancelActor(actor.key);
         if (!store.database["actors"].contains(actor.key)) store.database["actors"][actor.key] = NewActorProfile(actor.name);
+        EnsureDefaultPresets(store.database);
         store.database["actors"][actor.key]["managed"] = true;
         store.database["actors"][actor.key]["releasePending"] = false;
         SelectActor(actor.key); Save();
@@ -545,9 +549,34 @@ namespace Wardrobe
         unavailableActors_.insert(currentActor);
         ++actorGeneration_[currentActor]; SosBackend::Get().CancelActor(currentActor); SaveWorking();
     }
+    void Service::SetMultiplePresets(bool enabled)
+    {
+        if (!store.writable) return;
+        StoreActorContext();
+        for (auto& profile : store.database["actors"])
+        {
+            const auto id = profile.value("activePreset", "");
+            if (!id.empty()) profile["presetRuntime"][id] = profile["runtime"];
+        }
+        store.database["multiplePresets"] = enabled;
+        EnsureDefaultPresets(store.database);
+        for (auto& [key, profile] : store.database["actors"].items())
+        {
+            ++actorGeneration_[key]; SosBackend::Get().CancelActor(key);
+            profile["manual"] = false; profile.erase("manualState");
+            // 关闭时恢复默认预设的独立运行记录，避免沿用其他预设的自动结果。
+            if (!enabled)
+                profile["runtime"] = profile.value("presetRuntime", Json::object()).value(profile.value("activePreset", ""), Json::object());
+            profile["runtime"].erase("signature");
+        }
+        activePreset = ActorProfile().value("activePreset", "");
+        Save();
+    }
+
     void Service::ActivatePreset(const std::string& id)
     {
         if (!store.database["presets"].contains(id) || store.database["presets"][id].value("actor", "player") != currentActor) return;
+        if (!MultiplePresets() && id != ActorProfile().value("defaultPreset", "")) return;
         auto& profile = ActorProfile();
         if (!activePreset.empty()) profile["presetRuntime"][activePreset] = profile["runtime"];
         activePreset = id;
@@ -600,6 +629,22 @@ namespace Wardrobe
                     if (saved.contains(field)) profile[field] = saved[field];
                 if (!profile.value("managed", true)) { profile["automatic"] = false; profile["releasePending"] = true; }
                 profile["takeoverPending"] = profile.value("managed", true) && profile.value("automatic", false);
+            }
+            if (!MultiplePresets())
+            {
+                // 旧存档可带回其他活动预设；默认模式不接受这个绑定。
+                for (auto& profile : store.database["actors"])
+                {
+                    const auto current = profile.value("activePreset", "");
+                    const auto pinned = profile.value("defaultPreset", "");
+                    if (current != pinned)
+                    {
+                        if (!current.empty()) profile["presetRuntime"][current] = profile["runtime"];
+                        profile["runtime"] = profile.value("presetRuntime", Json::object()).value(pinned, Json::object());
+                        profile["manual"] = false; profile.erase("manualState");
+                    }
+                }
+                EnsureDefaultPresets(store.database);
             }
             working = ActorProfile()["workingItems"].get<std::vector<std::string>>();
             activePreset = ActorProfile().value("activePreset", "");
@@ -719,14 +764,20 @@ namespace Wardrobe
         else
         {
             static std::mt19937 generator(std::random_device{}());
+            bool useWorking = false;
             for (const auto& candidateState : actor.states)
             {
                 if (!rules.contains(candidateState) || !rules[candidateState].value("enabled", true)) continue;
                 const auto& rule = rules[candidateState];
-                std::vector<std::string> valid;
-                for (const auto& id : rule["groups"])
+                // 命中工作搭配规则即终止匹配；空工作搭配也不能回落到低优先级规则。
+                if (rule.value("useWorking", false))
                 {
-                    const auto groupID = id.get<std::string>();
+                    state = candidateState; useWorking = true;
+                    items = profile.value("workingItems", std::vector<std::string>{}); break;
+                }
+                std::vector<std::string> valid;
+                for (const auto& groupID : RuleCandidates(store.database, rule))
+                {
                     const auto* metadata = Group(groupID);
                     if (!metadata) continue;
                     if (SplitGroupID(groupID).first == "groups")
@@ -742,7 +793,7 @@ namespace Wardrobe
                 group = ChooseRuleGroup(rule, valid, progress, generator);
                 items = GenerateGroup(group); break;
             }
-            if (items.empty())
+            if (items.empty() && !useWorking)
             {
                 profile["runtime"]["signature"] = signature;
                 profile["runtime"]["error"] = "No usable outfit group for current conditions"; return;
@@ -751,9 +802,11 @@ namespace Wardrobe
             {
                 auto resume = runtime; resume.erase("resume"); runtime["resume"] = std::move(resume);
             }
-            runtime["state"] = state; runtime["group"] = group;
-            runtime["progress"][state]["last"] = group;
+            runtime["state"] = state; runtime["group"] = group; runtime["useWorking"] = useWorking;
+            if (!useWorking) runtime["progress"][state]["last"] = group;
         }
+        // 恢复或重新加载工作搭配规则时，读取当前成员而不是旧运行快照。
+        if (runtime.value("useWorking", false)) items = profile.value("workingItems", std::vector<std::string>{});
         runtime["signature"] = signature; runtime["items"] = items;
         const auto generation = actorGeneration_[actor.key]; autoBusy_.insert(actor.key);
         const auto mode = ParseActualEquipmentMode(profile.value("actualEquipmentMode", "off"));

@@ -850,6 +850,7 @@ namespace Wardrobe
 
         #include "wardrobe/PanelActors.inc"
 
+        std::string NewID(const Json& collection, std::string_view prefix);
         #include "wardrobe/PanelLayers.inc"
 
         std::string NewID(const Json& collection, std::string_view prefix)
@@ -869,52 +870,59 @@ namespace Wardrobe
             ImGui::BeginDisabled(!service.store.writable);
             bool automaticOutfits = service.ActorProfile().value("automatic", false);
             if (ImGui::Checkbox(Tr("Automatic outfits for this actor", "为当前角色启用自动换装"), &automaticOutfits)) service.SetAutomatic(automaticOutfits);
-            ImGui::InputTextWithHint("##preset search", Tr("Search presets / pinyin", "搜索预设 / 拼音"), &presetSearch);
-            std::string selected;
-            for (const auto& [id, preset] : presets.items())
+            if (service.MultiplePresets())
             {
-                if (preset.value("actor", "player") != service.currentActor || !MatchesGroupSearch(id, preset, presetSearch)) continue;
-                if (ImGui::Selectable((ObjectName(id, preset) + "##" + id).c_str(), service.activePreset == id)) selected = id;
-            }
-            if (!selected.empty())
-            {
-                service.ActivatePreset(selected);
-                presetName = ObjectName(selected, presets[selected]);
-                presetKeys = Join(presets[selected].value("search", Json::array()));
+                ImGui::InputTextWithHint("##preset search", Tr("Search presets / pinyin", "搜索预设 / 拼音"), &presetSearch);
+                std::string selected;
+                for (const auto& [id, preset] : presets.items())
+                {
+                    if (preset.value("actor", "player") != service.currentActor || !MatchesGroupSearch(id, preset, presetSearch)) continue;
+                    if (ImGui::Selectable((ObjectName(id, preset) + "##" + id).c_str(), service.activePreset == id)) selected = id;
+                }
+                if (!selected.empty())
+                {
+                    service.ActivatePreset(selected);
+                    presetName = ObjectName(selected, presets[selected]);
+                    presetKeys = Join(presets[selected].value("search", Json::array()));
+                }
             }
             const auto runtime = service.ActorProfile().value("runtime", Json::object());
-            if (runtime.contains("state")) ImGui::Text("%s: %s", StateName(runtime.value("state", "default")), NavigationName(runtime.value("group", "" )).c_str());
+            if (runtime.contains("state")) ImGui::Text("%s: %s", StateName(runtime.value("state", "default")), (runtime.value("useWorking", false) ? std::string(Tr("Working outfit", "工作搭配")) : NavigationName(runtime.value("group", ""))).c_str());
             if (!runtime.value("error", "").empty()) ImGui::TextWrapped("%s", runtime.value("error", "").c_str());
             if (ImGui::Button(Tr("Resume / retry automatic", "恢复 / 重试自动换装"))) service.ResumeAutomatic();
             ImGui::Separator();
-            EditText(Tr("Preset name", "预设名称"), presetName);
-            EditText(Tr("Preset search keys", "预设搜索词（每行一个）"), presetKeys, 65);
-            ImGui::BeginDisabled(presetName.empty());
-            if (ImGui::Button(Tr("New preset from working outfit", "从工作搭配新建预设")))
+            if (service.MultiplePresets())
             {
-                const auto id = NewID(presets, "preset-");
-                auto groupID = "preset-" + id;
-                while (service.store.database["groups"].contains(groupID)) groupID += "-1";
-                service.store.database["groups"][groupID] = {{"name", presetName}, {"items", service.working}};
-                presets[id] = {{"name", presetName}, {"search", Split(presetKeys)}, {"actor", service.currentActor}, {"group", "groups:" + groupID},
-                    {"rules", {{"default", {{"enabled", true}, {"mode", "single"}, {"groups", {"groups:" + groupID}}}}}}};
-                service.ActivatePreset(id); service.Save();
+                EditText(Tr("Preset name", "预设名称"), presetName);
+                EditText(Tr("Preset search keys", "预设搜索词（每行一个）"), presetKeys, 65);
+                ImGui::BeginDisabled(presetName.empty());
+                if (ImGui::Button(Tr("New preset", "新建预设")))
+                {
+                    const auto id = NewID(presets, "preset-");
+                    presets[id] = {{"name", presetName}, {"search", Split(presetKeys)}, {"actor", service.currentActor}, {"group", ""},
+                        {"rules", {{"default", {{"enabled", true}, {"mode", "single"}, {"groups", Json::array()}}}}}};
+                    service.ActivatePreset(id); service.Save();
+                }
+                ImGui::EndDisabled();
             }
-            ImGui::EndDisabled();
+            else ImGui::TextUnformatted(Tr("Configure this actor's default outfit rules", "配置当前角色的默认换装规则"));
             if (presets.contains(service.activePreset) && presets[service.activePreset].value("actor", "player") == service.currentActor)
             {
-                if (ImGui::Button(Tr("Rename / update search keys", "更新名称 / 搜索词")))
-                { presets[service.activePreset]["name"] = presetName; presets[service.activePreset]["search"] = Split(presetKeys); service.Save(); }
-                ImGui::SameLine();
+                if (service.MultiplePresets())
+                {
+                    if (ImGui::Button(Tr("Rename / update search keys", "更新名称 / 搜索词")))
+                    { presets[service.activePreset]["name"] = presetName; presets[service.activePreset]["search"] = Split(presetKeys); service.Save(); }
+                    ImGui::SameLine();
+                }
                 if (ImGui::Button(Tr("Apply default group", "手动应用默认服装组"))) service.SelectPreset(service.activePreset);
                 ImGui::SameLine();
-                if (ImGui::Button(Tr("Delete preset", "删除预设"))) ImGui::OpenPopup(Tr("Delete preset?", "删除预设？"));
+                if (service.MultiplePresets() && ImGui::Button(Tr("Delete preset", "删除预设"))) ImGui::OpenPopup(Tr("Delete preset?", "删除预设？"));
                 if (ImGui::BeginPopupModal(Tr("Delete preset?", "删除预设？"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
                 {
                     ImGui::TextUnformatted(Tr("Delete preset? Working outfit and groups are retained.", "删除预设？工作搭配和服装组会保留。"));
                     if (ImGui::Button(Tr("Delete", "删除")))
                     {
-                        service.SetAutomatic(false); presets.erase(service.activePreset); service.activePreset.clear(); service.Save(); ImGui::CloseCurrentPopup();
+                        service.SetAutomatic(false); presets.erase(service.activePreset); service.activePreset.clear(); service.Save(); service.activePreset = service.ActorProfile().value("activePreset", ""); ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine(); if (ImGui::Button(Tr("Cancel", "取消"))) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
@@ -1047,6 +1055,7 @@ namespace Wardrobe
             else if (action == "clear") service.Apply(true);
             else if (action == "preset")
             {
+                if (!service.MultiplePresets()) { service.status = "Multiple presets are disabled"; continue; }
                 std::string found;
                 for (const auto& [id, preset] : service.store.database["presets"].items())
                     if (preset.value("actor", "player") == service.currentActor && (Normalize(id) == Normalize(argument) || Normalize(ObjectName(id, preset)) == Normalize(argument))) { found = id; break; }
@@ -1090,6 +1099,7 @@ namespace Wardrobe
         }
         else if (shortcut.action == "preset" || shortcut.action == "applyPreset")
         {
+            if (!service.MultiplePresets()) return;
             if (shortcut.action == "preset") service.ActivatePreset(shortcut.target);
             else
             {
@@ -1125,7 +1135,12 @@ namespace Wardrobe
             const auto metadataFlags = selectMetadata ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
             selectMetadata = false;
             if (ImGui::BeginTabItem(Tr("Metadata", "分类与数据"), nullptr, metadataFlags)) { DrawManagement(); ImGui::EndTabItem(); }
-            if (ImGui::BeginTabItem(Tr("Interface", "界面设置"))) { DrawCatalogSettings(); DrawQuickAccessSettings(); Overlay::DrawInterfaceSettings(); ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem(Tr("Interface", "界面设置"))) {
+                bool multiple = service.MultiplePresets();
+                ImGui::BeginDisabled(!service.store.writable);
+                if (ImGui::Checkbox(Tr("Enable multiple presets (advanced)", "启用多预设（增强功能）"), &multiple)) service.SetMultiplePresets(multiple);
+                ImGui::EndDisabled();
+                DrawCatalogSettings(); DrawQuickAccessSettings(); Overlay::DrawInterfaceSettings(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
         DrawItemEditor();

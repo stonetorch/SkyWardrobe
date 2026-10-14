@@ -81,7 +81,7 @@ biped 槽位掩码只从游戏扫描，语义部件仅用于分类显示。部�
 
 `groups` 保存其他服装组，成员为 `items` FormKey 数组。分类和注册插件也通过同一服装组接口访问，但分类成员仍使用物品的 `categories`，插件组按来源插件直接读取目录，注册只保存来源，不生成全量成员或别名模板。别名模板可手动生成。
 
-组标识为 `categories:<分类 ID>`、`pluginCategories:<插件文件名>` 或 `groups:<组 ID>`。三类组均支持 `name`、`alias`、`note`、`search` 和 `references`（组标识数组）。别名优先于名称；插件可在元数据弹窗恢复直接显示模组名。引用只用于导航，不参与随机搭配，也不递归应用。
+组标识为 `categories:<分类 ID>`、`pluginCategories:<插件文件名>` 或 `groups:<组 ID>`。三类组均支持 `name`、`alias`、`note`、`search` 和 `references`（组标识数组）。别名优先于名称；插件可在元数据弹窗恢复直接显示模组名。引用用于导航，不参与组内随机选衣，也不递归应用；自动规则可将指定普通服装组的直接引用作为候选列表。
 
 预设的 `group` 字段绑定要使用的服装组。旧预设首次加载会自动迁移到独立服装组；原物品元数据和分类保持不变。应用预设或使用服装组会打乱直接成员顺序，选择真实 biped 槽位互不覆盖的服装，再应用结果。每次使用都重新随机；部件标记不参与冲突判定。旧 `items` 字段保留兼容信息，应用以 `group` 为准。
 
@@ -107,3 +107,24 @@ biped 槽位掩码只从游戏扫描，语义部件仅用于分类显示。部�
 预设与使用组操作沿用现有随机选衣和槽位冲突规则。目标使用稳定 ID，重命名无需重绑；删除目标或预设绑定组后格子以橙色提示失效，点击不会应用旧搭配，右键可重新绑定。
 
 图标库使用项目已有的 Font Awesome Free Solid 字体，包含 34 个常见图标；支持中英文搜索。`icon` 标识包括 `folder`、`shirt`、`dress`、`shoes`、`socks`、`gloves`、`hat`、`crown`、`gem`、`ring`、`glasses`、`mask`、`star`、`heart`、`shield`、`magic`、`dragon`、`bolt`、`fire`、`snow`、`sun`、`moon`、`leaf`、`feather`、`palette`、`user`、`home`、`bookmark`、`layers`、`tag`、`archive`、`dice`、`music`、`check`。未知标识回退为文件夹图标；字体缺失时显示文字。图标来源：[Font Awesome](https://fontawesome.com/)，许可证随现有字体分发。
+
+
+## 默认预设与规则候选列表
+
+顶层 `multiplePresets` 为布尔值，缺省 `false`。角色的 `defaultPreset` 保存固定默认预设 ID；首次迁移优先采用该角色当前活动预设，没有时采用已有的角色预设或创建空规则预设。关闭增强功能时 `activePreset` 固定为 `defaultPreset`，额外预设保留。新建服装组只保存工作搭配的 `items` 快照，不改变预设绑定或规则。
+
+规则仍包含 `enabled`、`mode` 和 `groups`。可选 `listGroup` 为 `groups:<组 ID>` 字符串：在 `random` / `sequence` 模式下，从该组的 `references` 动态读取直接候选，保持顺序、去重并跳过自身；后续按原有规则过滤无效或不可用组。列表源丢失或为空时回落到更低优先级条件，不使用手工 `groups` 替代。`single` 模式使用 `groups`。
+
+可选 `useWorking` 为布尔值，默认 `false`。启用条件命中且 `useWorking=true` 时，直接采用该角色的 `workingItems`，忽略候选组并停止匹配后续条件。即使工作搭配为空也保持此优先级，后备与原版透出按角色现有分层设置合成。该选项不会改写服装组或工作搭配。
+
+```json
+{
+  "enabled": true,
+  "mode": "sequence",
+  "groups": [],
+  "listGroup": "groups:城市穿搭列表",
+  "useWorking": false
+}
+```
+
+关闭多预设增强功能时，预设快捷格子的绑定保留但按钮隐藏，快捷编辑器不提供预设操作，控制台预设切换也被禁用。

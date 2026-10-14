@@ -62,6 +62,22 @@
                 }
                 ImGui::EndPopup();
             }
+            if (ImGui::Button(Tr("New outfit group from working outfit", "从工作搭配新建服装组"))) ImGui::OpenPopup("Save working group");
+            if (ImGui::BeginPopup("Save working group"))
+            {
+                static std::string name;
+                ImGui::InputText(Tr("Outfit group name", "服装组名称"), &name);
+                ImGui::BeginDisabled(name.empty() || !service.store.writable);
+                if (ImGui::Button(Tr("Create", "创建")))
+                {
+                    auto& groups = service.store.database["groups"];
+                    const auto id = NewID(groups, "group-");
+                    groups[id] = {{"name", name}, {"items", service.working}};
+                    // 保存成员快照，不改变当前预设、工作搭配或自动状态。
+                    service.Save(); name.clear(); ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled(); ImGui::EndPopup();
+            }
             const char* modes[] = {Tr("Off", "关闭"), Tr("Shoes only", "仅鞋子装备"), Tr("Equip all", "全部装备")};
             auto mode = static_cast<int>(service.EquipmentMode());
             ImGui::BeginDisabled(!service.store.writable);
