@@ -37,6 +37,7 @@ add_commonlibsse_plugin(${PROJECT_NAME}
         src/wardrobe/ActorRuntime.cpp
         src/wardrobe/Service.cpp
         src/wardrobe/SosBackend.cpp
+        src/wardrobe/SafeMode.cpp
         src/wardrobe/ActualEquipment.cpp
         src/wardrobe/Panel.cpp
         src/wardrobe/QuickAccess.cpp
@@ -193,6 +194,12 @@ target_compile_features(SkyWardrobeModelTests PRIVATE cxx_std_23)
 target_compile_definitions(SkyWardrobeModelTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(SkyWardrobeModelTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 add_test(NAME SkyWardrobeModelTests COMMAND SkyWardrobeModelTests)
+add_executable(SkyWardrobeSafeModeTests tests/SafeModeTests.cpp src/wardrobe/SafeMode.cpp)
+target_include_directories(SkyWardrobeSafeModeTests PRIVATE src)
+target_compile_features(SkyWardrobeSafeModeTests PRIVATE cxx_std_23)
+target_compile_definitions(SkyWardrobeSafeModeTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(SkyWardrobeSafeModeTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME SkyWardrobeSafeModeTests COMMAND SkyWardrobeSafeModeTests)
 target_sources(SkyWardrobeModelTests PRIVATE src/wardrobe/PinyinSearch.cpp)
 target_link_libraries(SkyWardrobeModelTests PRIVATE cpp-pinyin::cpp-pinyin)
 

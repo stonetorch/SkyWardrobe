@@ -28,8 +28,10 @@
             if (service.Dirty()) title += " *";
             LayerName(title);
             bool preview = service.livePreview;
+            ImGui::BeginDisabled(SafeMode::Get().Active());
             if (ImGui::Checkbox(Tr("Preview", "预览"), &preview)) service.SetLivePreview(preview);
             ImGui::SameLine(); if (ImGui::Button(Tr("Apply", "应用"))) service.Apply();
+            ImGui::EndDisabled();
             if (ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 12) ImGui::SameLine();
             if (ImGui::Button(Tr("More", "更多"))) ImGui::OpenPopup("Layer actions");
             if (ImGui::BeginPopup("Layer actions"))

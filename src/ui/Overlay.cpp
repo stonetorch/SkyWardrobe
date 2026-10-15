@@ -1,4 +1,6 @@
 #include "wardrobe/ActorRuntime.h"
+#include "wardrobe/SafeMode.h"
+#include "wardrobe/Service.h"
 #include "ui/Overlay.h"
 #include "ui/IconsFontAwesome6.h"
 #include "ui/UiTabs.h"
@@ -286,6 +288,22 @@ namespace
     void SaveSettings()
     {
         const auto path = SettingsPath();
+        // 界面设置只替换自己管理的键，保留手动安全模式开关及其他用户配置。
+        std::vector<std::string> preserved;
+        {
+            std::ifstream input(path);
+            std::string line;
+            while (std::getline(input, line))
+            {
+                const auto equal = line.find('=');
+                auto key = line.substr(0, equal);
+                const auto first = key.find_first_not_of(" \t\r");
+                key = first == std::string::npos ? "" : key.substr(first, key.find_last_not_of(" \t\r") - first + 1);
+                if (key != "hotkey_enabled" && key != "toggle_key" && key != "font_path" && key != "font_size" &&
+                    key != "small_font_size" && key != "ui_scale" && key != "cursor_sensitivity" && key != "safe_mode_on_unclean_exit")
+                    preserved.push_back(line);
+            }
+        }
         std::error_code error;
         std::filesystem::create_directories(path.parent_path(), error);
         const auto temporary = path.wstring() + L".tmp";
@@ -294,6 +312,8 @@ namespace
             output << "hotkey_enabled=" << hotkeyEnabled << '\n' << "toggle_key=" << toggleKey << '\n'
                 << "font_path=" << fontPath << '\n' << "font_size=" << fontSize << '\n' << "small_font_size=" << smallFontSize << '\n'
                 << "ui_scale=" << uiScale << '\n' << "cursor_sensitivity=" << cursorSensitivity << '\n';
+            output << "safe_mode_on_unclean_exit=" << Wardrobe::SafeMode::Get().AutomaticRecovery() << '\n';
+            for (const auto& line : preserved) output << line << '\n';
             output.flush();
             output.close();
             if (!output) { SKSE::log::error("Cannot save overlay settings"); return; }
@@ -581,6 +601,16 @@ void Overlay::Open()
 void Overlay::DrawInterfaceSettings()
 {
     using Wardrobe::Tr;
+    auto& safety = Wardrobe::SafeMode::Get();
+    bool automaticRecovery = safety.AutomaticRecovery();
+    if (ImGui::Checkbox(Tr("Enter safe mode after an abnormal exit", "异常退出后自动进入安全模式"), &automaticRecovery))
+    {
+        safety.SetAutomaticRecovery(automaticRecovery);
+        SaveSettings();
+    }
+    ImGui::TextWrapped("%s", Tr("Applies on the next launch. Abnormal exits include crashes, forced termination and power loss.",
+        "下次启动时生效。异常退出包括崩溃、强制结束和断电。"));
+    if (!safety.Active() && ImGui::Button(Tr("Enter safe mode", "进入安全模式"))) Wardrobe::Service::Get().EnterSafeMode();
     if (ImGui::Checkbox(Tr("Enable opening hotkey", "启用打开快捷键"), &hotkeyEnabled)) SaveSettings();
     ImGui::Text("%s: %s", Tr("Hotkey", "快捷键"), waitingForKey ? Tr("Press a key (Esc cancels)", "按下新按键（Esc 取消）") : KeyName(toggleKey).c_str());
     if (ImGui::Button(Tr("Change key", "修改按键"))) waitingForKey = true;

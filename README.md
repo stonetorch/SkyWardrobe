@@ -98,6 +98,24 @@ font_size=20
 small_font_size=16
 ```
 
+## 安全模式与异常退出恢复
+
+安全模式暂停 SkyWardrobe 的全部外观应用、实时预览、自动换装、多层刷新以及实际装备穿脱/清理；衣柜、预设和服装组仍可编辑保存。它是独立于存档的全局状态，读档或重新加载 JSON 不会解除。
+
+手动进入方式：
+
+- 在 `Data/SKSE/Plugins/SkyWardrobe/` 下创建普通文件，忽略最后一个扩展名后，文件名包含 `SAFEMODE` 即可，不区分大小写。例如 `SAFEMODE`、`enableSafeMode.txt`、`开启SAFEMODE.flag`。仅扫描该目录，不递归、不将目录当触发文件。
+- 在 `Data/SKSE/Plugins/SkyWardrobe.ini` 设置 `safe_mode=1`。
+- 在 WA 面板的“界面设置”中点击“进入安全模式”。
+
+“界面设置”中的“异常退出后自动进入安全模式”复选框可切换自动保护，默认开启，写入 INI 的 `safe_mode_on_unclean_exit`，下次启动时生效。关闭后，文件、INI 和按钮手动入口仍可使用；切换不会解除当前安全模式。正常模式的主面板顶部不显示安全模式按钮，只有处于安全模式时显示恢复提示与退出按钮。
+
+默认 `safe_mode_on_unclean_exit=1`。插件加载时先检查上一会话的 `SkyWardrobe/Session.running`，再同步写入本次运行标记；正常退出时通过 Windows `ExitProcess` 挂接及 CRT 退出回调，结合引擎 `quitGame` 状态清除标记。残留标记表示上次未正常退出，可能是 CTD、强制结束或断电，并不证明崩溃来自服装。设置 `safe_mode_on_unclean_exit=0` 可关闭自动进入，手动入口仍可用。退出挂接失败会写日志，可能保守地在下次启动进入安全模式。
+
+修复问题服装后，点击“退出安全模式并恢复换装”：先等待修复数据完成保存，删除该目录中全部匹配的触发文件，重新检查是否仍有文件可见，然后恢复换装。保存、删除或运行标记写入失败均保留安全模式并显示错误。MO2 多层同名文件若在删除后重新出现，也会阻止退出。INI 不被自动改写，保留 `safe_mode=1` 会在下次启动再次进入。
+
+恢复时使旧请求和自动搭配快照失效，保留轮换进度，按修复后的当前数据重新计算。运行中进入无法撤回已经提交给 SOS/引擎的调用。此模式拦截 WA 发起的操作；SOS 自己从存档恢复的问题外观，以及原版已穿戴装备在读档时崩溃，不在该拦截范围内。
+
 ## 构建与验证
 
 保留此目录已有的 CommonLibSSE-NG、vcpkg、CLion CMake 与 Visual Studio 2022 工具链。若从空目录准备，CommonLibSSE-NG `ng` 分支放入 `extern/CommonLibSSE-NG`，vcpkg 放入 `extern/vcpkg`；第三方依赖由现有 manifest 管理。nlohmann/json 3.12.0 的官方单头文件与 MIT 许可证随源码保存。

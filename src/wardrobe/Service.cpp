@@ -1,5 +1,6 @@
 #include "wardrobe/Service.h"
 #include "wardrobe/SosBackend.h"
+#include "wardrobe/SafeMode.h"
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
 
@@ -437,6 +438,12 @@ namespace Wardrobe
 
     void Service::Apply(bool clear, bool persist)
     {
+        if (SafeMode::Get().Active())
+        {
+            if (persist) SaveWorking();
+            status = "Safe mode: outfit application paused";
+            return;
+        }
         ActorProfile()["appearanceActive"] = !clear;
         MarkManual();
         if (persist) SaveWorking();
@@ -610,6 +617,51 @@ namespace Wardrobe
         PublishActorState(store.database["actors"]);
         std::lock_guard lock(autoMutex_); autoCompletions_.clear();
     }
+    void Service::EnterSafeMode()
+    {
+        SafeMode::Get().Enter("Manual / 手动进入");
+        SosBackend::Get().Reset();
+        for (auto& [key, generation] : actorGeneration_) ++generation;
+        autoBusy_.clear();
+        std::lock_guard lock(autoMutex_);
+        autoCompletions_.clear();
+    }
+
+    bool Service::ExitSafeMode()
+    {
+        if (!SafeMode::Get().Active()) return true;
+        if (!store.writable || batching_)
+        {
+            status = "Cannot leave safe mode: wardrobe is not writable or an edit is pending";
+            return false;
+        }
+        // 先丢弃旧结果，保留轮换进度，恢复时只使用修复后的成员重新生成搭配。
+        SosBackend::Get().Reset();
+        automaticStateFilters_.clear(); autoBusy_.clear();
+        for (auto& [key, profile] : store.database["actors"].items())
+        {
+            ++actorGeneration_[key];
+            const auto progress = profile.value("runtime", Json::object()).value("progress", Json::object());
+            profile["runtime"] = Json{{"progress", progress}};
+            if (profile.contains("presetRuntime"))
+                for (auto& runtime : profile["presetRuntime"])
+                    runtime = Json{{"progress", runtime.value("progress", Json::object())}};
+            profile["takeoverPending"] = profile.value("managed", true) && profile.value("automatic", false);
+            unavailableActors_.insert(key);
+        }
+        {
+            std::lock_guard lock(autoMutex_);
+            autoCompletions_.clear();
+        }
+        SaveWorking(); FlushSave();
+        if (!store.error.empty()) { status = store.error; return false; }
+        if (!SafeMode::Get().Leave()) { status = SafeMode::Get().Error(); return false; }
+        actorSnapshot = {}; nextActorPoll_ = {};
+        PublishActorState(store.database["actors"]);
+        status = "Safe mode disabled; outfit operations resumed";
+        return true;
+    }
+
     void Service::QueueSessionReset(bool ready)
     {
         worldReady_.store(ready);
@@ -655,6 +707,8 @@ namespace Wardrobe
             ++revision;
             SaveWorking();
         }
+        // 读档数据仍需合并，但暂停期间不采样、不推进自动轮换或消费失败回调。
+        if (SafeMode::Get().Active()) return;
         std::vector<AutoCompletion> completions;
         { std::lock_guard lock(autoMutex_); completions.swap(autoCompletions_); }
         for (auto& result : completions)

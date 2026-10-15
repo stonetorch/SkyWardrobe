@@ -1,4 +1,5 @@
 #include "wardrobe/ActualEquipment.h"
+#include "wardrobe/SafeMode.h"
 #include "wardrobe/ActorRuntime.h"
 #include "wardrobe/Model.h"
 #include <map>
@@ -177,6 +178,7 @@ namespace Wardrobe
 
     std::string ClearTemporaryEquipment(RE::Actor* actor)
     {
+        if (SafeMode::Get().Active()) return "Safe mode: equipment operations paused";
         std::lock_guard lock(equipmentMutex);
         auto* player = actor ? actor : RE::PlayerCharacter::GetSingleton();
         auto* manager = RE::ActorEquipManager::GetSingleton();
@@ -188,6 +190,7 @@ namespace Wardrobe
 
     std::string ApplyActualEquipment(const std::vector<RE::TESObjectARMO*>& armors, ActualEquipmentMode mode, RE::Actor* actor)
     {
+        if (SafeMode::Get().Active()) return "Safe mode: equipment operations paused";
         if (mode == ActualEquipmentMode::Off) return ClearTemporaryEquipment(actor);
         std::lock_guard lock(equipmentMutex);
         auto* player = actor ? actor : RE::PlayerCharacter::GetSingleton();

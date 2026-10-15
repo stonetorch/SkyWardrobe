@@ -1,4 +1,5 @@
 #include "wardrobe/SosBackend.h"
+#include "wardrobe/SafeMode.h"
 #include "wardrobe/Model.h"
 #include "wardrobe/ActorRuntime.h"
 #include "wardrobe/ActualEquipment.h"
@@ -52,7 +53,7 @@ namespace Wardrobe
                 if (!backend.CurrentActor(epoch, actorKey, version))
                 { backend.Finish(epoch, "SOS request superseded"); return; }
                 // 缺失原生插件时禁止进入 VM，连 IsEnabled 探测也不能调用。
-                if (!backend.IsInstalled()) return;
+                if (!backend.IsInstalled() || SafeMode::Get().Active()) return;
                 auto actor = actorHandle.get();
                 auto* player = actor.get();
                 auto* skyrim = RE::SkyrimVM::GetSingleton();
@@ -161,6 +162,7 @@ namespace Wardrobe
                     return;
                 }
                 auto self = shared_from_this();
+                if (!backend.CurrentActor(epoch, actorKey, version)) return;
                 RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback(new Completion([self](auto value) { self->Next(value); }));
                 if (!vm->DispatchStaticCall(scriptClass, function, arguments, callback))
                     backend.Finish(epoch, std::string("SOS API unavailable: ") + function);
@@ -186,7 +188,7 @@ namespace Wardrobe
 
     void SosBackend::CleanupEquipment(std::string actor)
     {
-        if (!IsInstalled()) return;
+        if (!IsInstalled() || SafeMode::Get().Active()) return;
         std::uint64_t epoch;
         std::uint64_t version;
         { std::lock_guard lock(mutex_); epoch = epoch_; version = actorVersions_[actor]; }
@@ -211,7 +213,7 @@ namespace Wardrobe
     void SosBackend::RequestFor(std::string actor, std::vector<std::string> keys, bool clear,
         ActualEquipmentMode mode, bool automatic, bool releaseOnly, std::function<void(bool)> completion, LayerSettings layers)
     {
-        if (!IsInstalled()) { if (completion) completion(false); return; }
+        if (!IsInstalled() || SafeMode::Get().Active()) { if (completion) completion(false); return; }
         std::function<void(bool)> cancelled;
         {
             std::lock_guard lock(mutex_);
@@ -229,12 +231,14 @@ namespace Wardrobe
     void SosBackend::TrackLayers(const std::string& actor, std::vector<std::string> keys, LayerSettings layers,
         ActualEquipmentMode mode, bool automatic, std::vector<LayerItem> equipment)
     {
+        if (SafeMode::Get().Active()) return;
         std::lock_guard lock(mutex_);
         activeLayers_[actor] = {{actor, std::move(keys), false, automatic, false, mode, {}, actorVersions_[actor], std::move(layers)}, std::move(equipment)};
     }
 
     void SosBackend::RefreshLayers(const std::string& actor, const std::vector<LayerItem>& equipment)
     {
+        if (SafeMode::Get().Active()) return;
         // 复用本轮角色快照中的装备，避免轮询时重复扫描同一物品栏。
         RequestData request;
         {
@@ -263,7 +267,7 @@ namespace Wardrobe
 
     void SosBackend::StartNext()
     {
-        if (!IsInstalled()) return;
+        if (!IsInstalled() || SafeMode::Get().Active()) return;
         auto operation = std::make_shared<Operation>();
         std::vector<std::string> keys;
         {
@@ -346,14 +350,14 @@ namespace Wardrobe
         StartNext();
     }
 
-    bool SosBackend::Current(std::uint64_t epoch) const { std::lock_guard lock(mutex_); return epoch == epoch_; }
+    bool SosBackend::Current(std::uint64_t epoch) const { std::lock_guard lock(mutex_); return !SafeMode::Get().Active() && epoch == epoch_; }
     bool SosBackend::CurrentActor(std::uint64_t epoch, const std::string& actor, std::uint64_t version) const
     {
         std::lock_guard lock(mutex_);
         const auto it = actorVersions_.find(actor);
-        return epoch == epoch_ && it != actorVersions_.end() && it->second == version;
+        return !SafeMode::Get().Active() && epoch == epoch_ && it != actorVersions_.end() && it->second == version;
     }
-    std::string SosBackend::Status() const { std::lock_guard lock(mutex_); return status_; }
+    std::string SosBackend::Status() const { std::lock_guard lock(mutex_); return SafeMode::Get().Active() ? "Safe mode: outfit operations paused" : status_; }
     void SosBackend::Reset()
     {
         std::lock_guard lock(mutex_);

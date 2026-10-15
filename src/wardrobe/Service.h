@@ -55,6 +55,8 @@ namespace Wardrobe
         void TickActors();
         void ResetActorSession();
         void QueueSessionReset(bool ready);
+        void EnterSafeMode();
+        bool ExitSafeMode();
         Json& ActorProfile() { return store.database["actors"][currentActor]; }
         std::string currentActor = "player";
         ActorSnapshot actorSnapshot;

@@ -1,4 +1,5 @@
 #include "wardrobe/Panel.h"
+#include "wardrobe/SafeMode.h"
 #include "wardrobe/Service.h"
 #include "wardrobe/SosBackend.h"
 #include "wardrobe/QuickAccess.h"
@@ -1080,6 +1081,18 @@ namespace Wardrobe
         }
         auto& service = Service::Get();
         static bool settingsLoaded = false;
+        if (SafeMode::Get().Active())
+        {
+            ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), "%s", Tr("Safe mode: outfit operations paused", "安全模式：所有服装应用已暂停"));
+            ImGui::TextWrapped("%s", SafeMode::Get().Reason().c_str());
+            ImGui::TextWrapped("%s", Tr("Edit and save your wardrobe to remove faulty outfits. Preview and equipment changes are paused.",
+                "请在衣柜、预设及服装组中移除问题服装并保存。预览、外观覆盖和实际装备操作均已暂停。"));
+            if (!SafeMode::Get().Error().empty()) ImGui::TextWrapped("%s", SafeMode::Get().Error().c_str());
+            if (ImGui::Button(Tr("Exit safe mode and resume outfits", "退出安全模式并恢复换装"))) service.ExitSafeMode();
+            ImGui::TextWrapped("%s", Tr("This deletes all SAFEMODE trigger files. INI safe_mode=1 will request safe mode again on the next launch.",
+                "退出时删除全部 SAFEMODE 触发文件。若 INI 中仍为 safe_mode=1，下次启动仍会进入安全模式。"));
+        }
+        if (SafeMode::Get().Active()) ImGui::Separator();
         if (!settingsLoaded)
         {
             const auto options = service.store.database.value("viewOptions", Json::object());

@@ -13,9 +13,44 @@
 #include "wardrobe/Service.h"
 #include "wardrobe/ActualEquipment.h"
 #include "wardrobe/SosBackend.h"
+#include "wardrobe/SafeMode.h"
+#include <Windows.h>
+#include <MinHook.h>
+#include <cstdlib>
 
 namespace
 {
+    using ExitProcessFunction = void(WINAPI*)(UINT);
+    ExitProcessFunction originalExitProcess = nullptr;
+
+    void RecordNormalExit()
+    {
+        // 只在引擎确认退出时清标记，主菜单和读档均不算正常结束会话。
+        const auto* main = RE::Main::GetSingleton();
+        if (main && main->GetRuntimeData().quitGame) Wardrobe::SafeMode::Get().NormalExit();
+    }
+
+    void WINAPI OnExitProcess(UINT exitCode)
+    {
+        if (exitCode == 0) RecordNormalExit();
+        originalExitProcess(exitCode);
+    }
+
+    void InstallExitDetection()
+    {
+        std::atexit(RecordNormalExit);
+        const auto initialized = MH_Initialize();
+        if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED)
+        {
+            SKSE::log::warn("Normal exit hook initialization failed; unclean exit detection may be conservative");
+            return;
+        }
+        auto* address = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "ExitProcess"));
+        if (!address || MH_CreateHook(address, &OnExitProcess, reinterpret_cast<void**>(&originalExitProcess)) != MH_OK ||
+            MH_EnableHook(address) != MH_OK)
+            SKSE::log::warn("Normal exit hook unavailable; using CRT exit callback");
+    }
+
     void OnDataLoaded()
     {
         Wardrobe::SosBackend::Get().DetectInstallation();
@@ -46,6 +81,10 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
         spdlog::default_logger()->flush();
     }
 
+    Wardrobe::SafeMode::Get().Initialize();
+    InstallExitDetection();
+    if (Wardrobe::SafeMode::Get().Active()) SKSE::log::warn("Safe mode: {}", Wardrobe::SafeMode::Get().Reason());
+    if (!Wardrobe::SafeMode::Get().Error().empty()) SKSE::log::error("{}", Wardrobe::SafeMode::Get().Error());
     Wardrobe::RegisterActualEquipmentSerialization();
     const auto* messaging = SKSE::GetMessagingInterface();
     return messaging && messaging->RegisterListener([](SKSE::MessagingInterface::Message* message) {
