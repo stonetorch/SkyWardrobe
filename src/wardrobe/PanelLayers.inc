@@ -30,6 +30,7 @@
             bool preview = service.livePreview;
             ImGui::BeginDisabled(SafeMode::Get().Active());
             if (ImGui::Checkbox(Tr("Preview", "预览"), &preview)) service.SetLivePreview(preview);
+            MarkManualAnchor(ManualTarget::Preview);
             ImGui::SameLine(); if (ImGui::Button(Tr("Apply", "应用"))) service.Apply();
             ImGui::EndDisabled();
             if (ImGui::GetContentRegionAvail().x > ImGui::GetFontSize() * 12) ImGui::SameLine();
@@ -65,6 +66,7 @@
                 ImGui::EndPopup();
             }
             if (ImGui::Button(Tr("New outfit group from working outfit", "从工作搭配新建服装组"))) ImGui::OpenPopup("Save working group");
+            MarkManualAnchor(ManualTarget::CreateGroup);
             if (ImGui::BeginPopup("Save working group"))
             {
                 static std::string name;
@@ -85,6 +87,7 @@
             ImGui::BeginDisabled(!service.store.writable);
             ImGui::SetNextItemWidth(std::max(50.0f, ImGui::GetContentRegionAvail().x));
             if (ImGui::Combo("##actual equipment", &mode, modes, 3)) service.SetEquipmentMode(static_cast<ActualEquipmentMode>(mode));
+            MarkManualAnchor(ManualTarget::Equipment);
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Tr("Actual equipment: working and backup items may be actually equipped. Original passthrough items are not re-equipped. Changes armor effects; shoes use slot 37.",
                 "实际装备：工作与后备项按模式实际穿戴，原版透出项不重新装备。会改变护甲和装备效果；鞋子按槽位37判断。"));
@@ -124,6 +127,8 @@
                 // 与左栏共用原生折叠箭头；展开状态仍由高度自适应布局管理。
                 ImGui::SetNextItemOpen(open[layer], ImGuiCond_Always);
                 ImGui::CollapsingHeader((headings[layer] + "###layer header").c_str());
+                if (layer == 1) MarkManualAnchor(ManualTarget::Backup);
+                if (layer == 2) MarkManualAnchor(ManualTarget::Original);
                 if (ImGui::IsItemToggledOpen())
                 {
                     active = layer;

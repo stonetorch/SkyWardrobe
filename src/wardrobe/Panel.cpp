@@ -9,6 +9,7 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 #include <array>
+#include <cmath>
 #include <mutex>
 #include <numeric>
 #include <sstream>
@@ -34,6 +35,8 @@ namespace Wardrobe
         std::string pluginAlias, pluginKeys;
         std::mutex commandMutex;
         std::vector<std::pair<std::string, std::string>> commands;
+
+        #include "wardrobe/PanelManual.inc"
 
         enum class QuickAction { None, Add, Part, Remove };
         QuickAction quickAction = QuickAction::None;
@@ -508,6 +511,7 @@ namespace Wardrobe
             ImGui::BeginDisabled(!service.store.writable);
             bool selectTarget = false;
             if (ImGui::Button(Tr("Quick actions", "快捷操作"))) ImGui::OpenPopup("Quick action menu");
+            MarkManualAnchor(ManualTarget::Quick);
             if (ImGui::BeginPopup("Quick action menu"))
             {
                 if (ImGui::MenuItem(Tr("Add to group", "添加到服装组"))) { pendingQuickAction = QuickAction::Add; selectTarget = true; }
@@ -582,6 +586,7 @@ namespace Wardrobe
             DrawGroupActions();
             ImGui::SetNextItemWidth(-1);
             ImGui::InputTextWithHint("##catalog search", Tr("Search name, pinyin, category, plugin, note...", "搜索名称、拼音、分类、插件、备注…"), &search);
+            MarkManualAnchor(ManualTarget::Search);
             static std::vector<std::pair<std::size_t, int>> ranked;
             static std::uint64_t cachedRevision = static_cast<std::uint64_t>(-1);
             static std::string cachedSearch, cachedViewID;
@@ -767,6 +772,7 @@ namespace Wardrobe
             ViewButton("★ Favorites", View::Favorites);
             ViewButton(Tr("Uncategorized", "未分类"), View::Uncategorized);
             ViewButton(Tr("Working outfit", "工作搭配"), View::Working);
+            MarkManualAnchor(ManualTarget::Working);
             ImGui::Separator();
             // 固定入口不参与滚动，下面三个分区只共用一个滚动容器。
             ImGui::BeginChild("Scrollable group navigation", ImVec2(0, 0));
@@ -1071,6 +1077,7 @@ namespace Wardrobe
 
     void DrawPanel()
     {
+        manualAnchors = {};
         if (!SosBackend::Get().IsInstalled())
         {
             ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "%s",
@@ -1131,7 +1138,7 @@ namespace Wardrobe
         }
         if (ImGui::BeginTabBar("Wardrobe pages"))
         {
-            if (ImGui::BeginTabItem(Tr("Wardrobe", "衣柜"), nullptr, selectWardrobe ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
+            if (BeginManualTab(Tr("Wardrobe", "衣柜"), ManualTarget::Wardrobe, selectWardrobe ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
             {
                 const float font = ImGui::GetFontSize();
                 const float available = ImGui::GetContentRegionAvail().x;
@@ -1146,12 +1153,15 @@ namespace Wardrobe
                 ImGui::SameLine(); ImGui::BeginChild("Working", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse); DrawWorking(); ImGui::EndChild();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem(Tr("Actors", "角色管理"))) { DrawActorManagement(); ImGui::EndTabItem(); }
-            if (ImGui::BeginTabItem(Tr("Presets", "预设"))) { DrawPresets(); ImGui::EndTabItem(); }
+            if (BeginManualTab(Tr("Actors", "角色管理"), ManualTarget::Actors)) { DrawActorManagement(); ImGui::EndTabItem(); }
+            if (BeginManualTab(Tr("Presets", "预设"), ManualTarget::Presets)) { DrawPresets(); ImGui::EndTabItem(); }
             const auto metadataFlags = selectMetadata ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
             selectMetadata = false;
-            if (ImGui::BeginTabItem(Tr("Metadata", "分类与数据"), nullptr, metadataFlags)) { DrawManagement(); ImGui::EndTabItem(); }
-            if (ImGui::BeginTabItem(Tr("Interface", "界面设置"))) {
+            if (BeginManualTab(Tr("Metadata", "分类与数据"), ManualTarget::Metadata, metadataFlags)) { DrawManagement(); ImGui::EndTabItem(); }
+            if (BeginManualTab(Tr("Interface", "界面设置"), ManualTarget::Interface)) {
+                if (ImGui::Button(Tr("Open operation manual", "打开操作手册"))) { manualOpen = true; manualPage = -1; }
+                ImGui::TextWrapped("%s", Tr("Short tutorials with contents, examples, and arrows to the real controls.", "按主题查看简短教程、操作示例与实际按钮指引。"));
+                ImGui::Separator();
                 bool multiple = service.MultiplePresets();
                 ImGui::BeginDisabled(!service.store.writable);
                 if (ImGui::Checkbox(Tr("Enable multiple presets (advanced)", "启用多预设（增强功能）"), &multiple)) service.SetMultiplePresets(multiple);
@@ -1162,5 +1172,6 @@ namespace Wardrobe
         DrawItemEditor();
         DrawGroupEditor();
         DrawNavigationDialogs();
+        DrawManual();
     }
 }
