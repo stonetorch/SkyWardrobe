@@ -31,6 +31,7 @@ add_commonlibsse_plugin(${PROJECT_NAME}
         src/Plugin.cpp
         src/ui/Overlay.cpp
         src/ui/InputMethod.cpp
+        src/ui/ime/Win32Ime.cpp
         src/ui/UiTabs.cpp
         src/wardrobe/Store.cpp
         src/wardrobe/PinyinSearch.cpp
@@ -68,7 +69,9 @@ endif()
 # 交给 cl.exe 并行编译插件源文件。
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/MP>)
 target_precompile_headers(${PROJECT_NAME} PRIVATE src/PCH.h)
-target_link_libraries(${PROJECT_NAME} PRIVATE imgui::imgui minhook::minhook cpp-pinyin::cpp-pinyin d3d11 dxgi)
+# 可迁移模块独立编译，避免意外依赖 Skyrim 预编译头。
+set_source_files_properties(src/ui/ime/Win32Ime.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+target_link_libraries(${PROJECT_NAME} PRIVATE imgui::imgui minhook::minhook cpp-pinyin::cpp-pinyin d3d11 dxgi imm32)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Data/SKSE/Plugins"

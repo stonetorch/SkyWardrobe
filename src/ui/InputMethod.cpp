@@ -1,4 +1,7 @@
+#include <RE/Skyrim.h>
+
 #include "ui/InputMethod.h"
+#include "ui/ime/Win32Ime.h"
 #include "ui/Overlay.h"
 #include "wardrobe/Panel.h"
 
@@ -6,6 +9,7 @@
 #include <SKSE/SKSE.h>
 #include <Windows.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <atomic>
 #include <cstring>
@@ -30,6 +34,16 @@ namespace Overlay::InputMethod
             }
         }
         Provider provider = Provider::kNone;
+        Ime::Win32Ime nativeIme;
+        std::atomic<Ime::Backend> requestedBackend = Ime::Backend::Automatic;
+        std::atomic_uint disabledBackends = 0;
+        POINT caret{};
+        LONG caretHeight = 20;
+        Ime::Backend EffectiveBackend()
+        {
+            return Ime::Resolve(requestedBackend.load(), IsExternal(provider), provider == Provider::kConflict, disabledBackends.load());
+        }
+        bool ExternalEnabled() { return EffectiveBackend() == Ime::Backend::External; }
         std::mutex stateMutex;
         TextSession session;
         Utf16Decoder decoder;
@@ -56,6 +70,12 @@ namespace Overlay::InputMethod
         };
         std::vector<Event> events;
 
+        void PublishNativeState()
+        {
+            // 调用方持有 stateMutex；Win32 模块只复制请求，不在这里操作窗口资源。
+            nativeIme.Publish({ EffectiveBackend(), session.Generation(), overlayVisible && applicationFocused && session.Active(), caret, caretHeight });
+        }
+
         void ScheduleSync();
 
         void NativeAllowTextInput(bool allow)
@@ -77,6 +97,7 @@ namespace Overlay::InputMethod
             resetKeys = true;
             textLeaseReady = false;
             ctrlPressed = false;
+            PublishNativeState();
         }
 
         void SyncGameState()
@@ -88,8 +109,8 @@ namespace Overlay::InputMethod
             std::uint64_t generation;
             {
                 std::lock_guard lock(stateMutex);
-                show = overlayVisible && applicationFocused && NeedsMenuBridge(provider);
-                want = CanAcquireTextInput(provider, overlayVisible, applicationFocused, session.Active(), menuOpen.load());
+                show = ExternalEnabled() && overlayVisible && applicationFocused && NeedsMenuBridge(provider);
+                want = ExternalEnabled() && CanAcquireTextInput(provider, overlayVisible, applicationFocused, session.Active(), menuOpen.load());
                 id = session.ID();
                 generation = session.Generation();
             }
@@ -128,7 +149,7 @@ namespace Overlay::InputMethod
 
         void ScheduleSync()
         {
-            if (!IsExternal(provider) || syncPending.exchange(true)) return;
+            if (syncPending.exchange(true)) return;
             if (const auto* tasks = SKSE::GetTaskInterface()) tasks->AddUITask(SyncGameState);
             else syncPending = false;
         }
@@ -145,8 +166,10 @@ namespace Overlay::InputMethod
                     session.Active(), session.ID(), overlayVisible, applicationFocused, textLeaseReady);
                 spdlog::default_logger()->flush();
             }
-            if (!overlayVisible || !applicationFocused || !session.Active() || !AcceptsSource(provider, source)) return;
-            if (IsExternal(provider) && !textLeaseReady) return;
+            if (!overlayVisible || !applicationFocused || !session.Active()) return;
+            if (Ime::IsNative(EffectiveBackend()) && nativeIme.Snapshot().active) return;
+            if (!AcceptsSource(ExternalEnabled() ? provider : Provider::kNone, source)) return;
+            if (ExternalEnabled() && !textLeaseReady) return;
             if (source == CharacterSource::kScaleform && IsPasteFallback(provider, code, ctrlPressed))
             {
                 events.push_back({ Event::Kind::kPaste, 0, true, 0, session.Generation() });
@@ -239,10 +262,13 @@ namespace Overlay::InputMethod
                     bool close;
                     {
                         std::lock_guard lock(stateMutex);
-                        close = overlayVisible;
-                        overlayVisible = false;
-                        session.SetFocus(false, 0);
-                        InvalidateInput();
+                        close = overlayVisible && ExternalEnabled();
+                        if (close)
+                        {
+                            overlayVisible = false;
+                            session.SetFocus(false, 0);
+                            InvalidateInput();
+                        }
                     }
                     if (close) Overlay::CloseAllMenus();
                     ScheduleSync();
@@ -267,7 +293,7 @@ namespace Overlay::InputMethod
                     bool close = false;
                     {
                         std::lock_guard lock(stateMutex);
-                        if (overlayVisible && applicationFocused)
+                        if (ExternalEnabled() && overlayVisible && applicationFocused)
                         {
                             close = down && key->keyCode == RE::GFxKey::kEscape && !session.Active();
                             ctrlPressed = (key->specialKeyState.states & 2) != 0;
@@ -313,7 +339,7 @@ namespace Overlay::InputMethod
             GetModuleHandleW(L"SkyrimInputMethod.dll") != nullptr, GetModuleHandleW(L"InputMethodUnlocked.dll") != nullptr);
         SKSE::log::info("External IME provider: {}", ProviderName(provider));
         spdlog::default_logger()->flush();
-        if (auto* ui = RE::UI::GetSingleton(); ui && IsExternal(provider))
+        if (auto* ui = RE::UI::GetSingleton())
         {
             if (NeedsMenuBridge(provider)) ui->Register(kMenuName, TextInputMenu::Create);
             ui->AddEventSink<RE::MenuOpenCloseEvent>(&menuObserver);
@@ -330,8 +356,8 @@ namespace Overlay::InputMethod
             changed = overlayVisible != visible || applicationFocused != focused;
             overlayVisible = visible;
             applicationFocused = focused;
-            if (changed) InvalidateInput();
             if (!visible || !focused) session.SetFocus(false, 0);
+            if (changed) InvalidateInput();
         }
         if (changed) ScheduleSync();
     }
@@ -350,13 +376,13 @@ namespace Overlay::InputMethod
     bool UsesMenuInput()
     {
         std::lock_guard lock(stateMutex);
-        return NeedsMenuBridge(provider) && overlayVisible && applicationFocused && menuOpen.load();
+        return ExternalEnabled() && NeedsMenuBridge(provider) && overlayVisible && applicationFocused && menuOpen.load();
     }
 
     bool UsesGameInputMethod()
     {
         std::lock_guard lock(stateMutex);
-        return provider == Provider::kInputMethodUnlocked && overlayVisible && applicationFocused;
+        return ExternalEnabled() && provider == Provider::kInputMethodUnlocked && overlayVisible && applicationFocused;
     }
 
     bool WantsTextInput()
@@ -369,19 +395,32 @@ namespace Overlay::InputMethod
 
     void Flush()
     {
+        const auto nativeCommits = nativeIme.Drain();
         std::vector<Event> pending;
         bool clear;
         std::uint64_t generation;
         bool active;
         {
             std::lock_guard lock(stateMutex);
+            if (session.Active() && Ime::IsNative(EffectiveBackend()))
+            {
+                for (const auto& commit : nativeCommits)
+                {
+                    if (!session.Accepts(commit.generation)) continue;
+                    for (auto unit : commit.text)
+                        for (auto scalar : decoder.Push(unit))
+                            if (scalar >= 32 && scalar != 127)
+                                events.push_back({ Event::Kind::kCharacter, scalar, true, 0, commit.generation });
+                }
+            }
             pending.swap(events);
             clear = std::exchange(resetKeys, false);
             generation = session.Generation();
             active = session.Active();
         }
         auto& io = ImGui::GetIO();
-        if (clear) io.ClearInputKeys();
+        if (clear || nativeIme.Snapshot().suppressKeys) io.ClearInputKeys();
+        // 本模块只在绘制线程写 ImGui；跨线程提交按编辑会话校验，重复文字照常保留。
         for (const auto& event : pending)
         {
             if (event.generation != generation) continue;
@@ -407,7 +446,47 @@ namespace Overlay::InputMethod
         }
     }
 
-    void DrawStatus()
+    void AttachWindow(HWND window) { nativeIme.Attach(window); }
+
+    std::optional<LRESULT> HandleWindowMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+    {
+        if (message == WM_KILLFOCUS && Ime::IsNative(EffectiveBackend()))
+        {
+            std::lock_guard lock(stateMutex);
+            session.SetFocus(false, 0);
+            InvalidateInput();
+        }
+        return nativeIme.Handle(window, message, wParam, lParam);
+    }
+
+    void PublishCaret(float x, float y, float lineHeight)
+    {
+        std::lock_guard lock(stateMutex);
+        caret = { static_cast<LONG>(x), static_cast<LONG>(y) };
+        caretHeight = static_cast<LONG>(lineHeight);
+        PublishNativeState();
+    }
+
+    bool FilterNativeKey(unsigned key, bool down) { return nativeIme.FilterKey(key, down); }
+    void EndFrame() { nativeIme.EndFrame(); }
+    Ime::Backend RequestedBackend() { return requestedBackend.load(); }
+    unsigned DisabledBackends() { return disabledBackends.load(); }
+
+    void Configure(Ime::Backend backend, unsigned disabled)
+    {
+        if (backend < Ime::Backend::Automatic || backend > Ime::Backend::Disabled) backend = Ime::Backend::Automatic;
+        requestedBackend = backend;
+        disabledBackends = disabled & 14u;
+        {
+            std::lock_guard lock(stateMutex);
+            session.SetFocus(false, 0);
+            InvalidateInput();
+        }
+        ScheduleSync();
+        SKSE::log::info("IME backend requested={}, effective={}, disabled={}", static_cast<int>(backend), static_cast<int>(EffectiveBackend()), disabledBackends.load());
+    }
+
+    bool DrawStatus()
     {
         using Wardrobe::Tr;
         const char* name = "Ctrl+V";
@@ -419,10 +498,49 @@ namespace Overlay::InputMethod
         case Provider::kConflict: name = Tr("Multiple IME plugins loaded", "同时加载了多个输入法模组"); break;
         default: break;
         }
-        ImGui::Text("%s: %s", Tr("Text input", "文本输入"), name);
+        ImGui::Text("%s: %s", Tr("Detected external IME", "检测到的外部 IME"), name);
         if (provider == Provider::kSimpleIME)
             ImGui::TextWrapped("%s", Tr("In SimpleIME, set IME window positioning to Follow Cursor or None.", "请在 SimpleIME 中将候选窗位置设为 Follow Cursor 或 None。"));
         if (provider == Provider::kConflict)
             ImGui::TextWrapped("%s", Tr("Enable one IME plugin and restart the game. Clipboard paste remains available.", "请只启用一个输入法模组并重启游戏。仍可使用剪贴板粘贴。"));
+        const char* names[] = { Tr("Automatic", "自动"), "IMM shared [1]", "IMM private [2]",
+            Tr("External mod bridge [3]", "外部模组桥接 [3]"), Tr("Disabled / clipboard", "禁用 / 剪贴板") };
+        int selection = static_cast<int>(RequestedBackend());
+        bool changed = ImGui::Combo(Tr("IME backend", "IME 实现"), &selection, names, 5);
+        auto disabled = DisabledBackends();
+        for (int index = 1; index <= 3; ++index)
+        {
+            bool enabled = !(disabled & (1u << index));
+            ImGui::PushID(index);
+            if (ImGui::Checkbox(names[index], &enabled))
+            {
+                disabled = enabled ? disabled & ~(1u << index) : disabled | (1u << index);
+                changed = true;
+            }
+            ImGui::PopID();
+            if (index < 3) ImGui::SameLine();
+        }
+        if (changed)
+        {
+            ImGui::ClearActiveID();
+            Configure(static_cast<Ime::Backend>(selection), disabled);
+        }
+        ImGui::Text("%s: %s", Tr("Effective backend", "实际实现"), names[static_cast<int>(EffectiveBackend())]);
+        ImGui::TextWrapped("%s", Tr("Uncheck a backend to disable it persistently. Native IMM is blocked while known external IME mods are loaded. Shared borrows the existing context; private restores the original context after editing.",
+            "取消勾选可持久禁用对应实现。已加载已知外部输入法模组时，原生 IMM 不接管窗口。Shared 复用现有上下文；Private 在编辑结束后恢复原关联。"));
+        const auto status = nativeIme.Snapshot();
+        ImGui::Text("IMM: active=%d, context=%d, composing=%d, commits=%u, failures=%u", status.active, status.contextAvailable, status.composing, status.commits, status.failures);
+        if (status.associationChanged)
+            ImGui::TextWrapped("%s", Tr("Another component changed the IME context; this session was released.", "其他组件改变了 IME 上下文，当前接入已释放。"));
+        if (Ime::IsNative(EffectiveBackend()) && !status.contextAvailable)
+            ImGui::TextWrapped("%s", Tr("Focus the test field. If shared has no context, try private [2].", "请聚焦测试框；若 Shared 仍无上下文，切换 Private [2] 测试。"));
+        static char testText[4096]{};
+        static char secondText[4096]{};
+        ImGui::InputText(Tr("IME test A", "IME 测试 A"), testText, sizeof(testText));
+        ImGui::InputText(Tr("IME test B", "IME 测试 B"), secondText, sizeof(secondText));
+        if (ImGui::Button(Tr("Clear test text", "清空测试文字"))) testText[0] = secondText[0] = '\0';
+        ImGui::TextWrapped("%s", Tr("Test your language, repeated text, long commits, Backspace, candidate selection, Esc, switching A/B and Alt+Tab. Test text is not saved.",
+            "测试你的语言、重复文字、长句、退格、候选选择、Esc、A/B 切换与 Alt+Tab。测试文字不保存。"));
+        return changed;
     }
 }

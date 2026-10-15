@@ -1,4 +1,5 @@
 #include "ui/InputMethodState.h"
+#include "ui/ime/BackendPolicy.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -16,6 +17,32 @@ int main()
     using namespace Overlay::InputMethod;
     try
     {
+        using Ime::Backend;
+        Require(Ime::Resolve(Backend::Automatic, false, false, 0) == Backend::ImmShared, "Standalone defaults to shared IMM");
+        Require(Ime::Resolve(Backend::Automatic, false, false, 2) == Backend::ImmPrivate, "Disabled shared falls back to private");
+        Require(Ime::Resolve(Backend::Automatic, false, false, 6) == Backend::Disabled, "Disabling both native paths leaves clipboard/game input");
+        Require(Ime::Resolve(Backend::Automatic, true, false, 0) == Backend::External, "External IME owns its window context");
+        Require(Ime::Resolve(Backend::Automatic, true, false, 8) == Backend::Disabled, "Disabling bridge does not take the loaded mod's context");
+        for (auto backend : { Backend::ImmShared, Backend::ImmPrivate })
+        {
+            Require(Ime::Resolve(backend, true, false, 0) == Backend::Disabled, "Explicit native mode cannot race an external mod");
+            Require(Ime::Resolve(backend, false, false, 1u << static_cast<int>(backend)) == Backend::Disabled, "Explicit disabled mode does not silently substitute another backend");
+        }
+        Require(Ime::Resolve(Backend::External, false, false, 0) == Backend::Disabled, "No missing external dependency activation");
+        Require(Ime::Resolve(Backend::Automatic, true, true, 0) == Backend::Disabled, "Conflicting external mods never trigger native takeover");
+        Ime::CompositionKeys keys;
+        Require(!keys.Filter(13, true), "Normal Enter remains available outside composition");
+        keys.Begin();
+        Require(keys.Filter(13, true) && keys.Filter(27, true), "Candidate confirm/cancel keys are blocked");
+        keys.End();
+        keys.EndFrame();
+        Require(keys.Filter(32, true), "Late game poll from composition boundary is blocked");
+        keys.EndFrame();
+        Require(!keys.Suppresses(), "Boundary guard ends");
+        Require(keys.Filter(27, true), "Held cancel key cannot close the overlay after composition ends");
+        Require(keys.Filter(27, false) && !keys.Filter(27, true), "Blocked release completes pair; a fresh Escape is available");
+        Require(keys.Filter(13, false) && !keys.Filter(13, true), "Confirm key cannot submit twice; new Enter works");
+        Require(!keys.Filter(256, true), "Unknown virtual keys do not index the gate");
         Require(SelectProvider(false, false, false) == Provider::kNone, "No plugin keeps game input");
         Require(SelectProvider(true, false, false) == Provider::kSimpleIME, "Detect SimpleIME");
         Require(SelectProvider(false, true, false) == Provider::kSkyrimInputMethod, "Detect SIM");
@@ -59,6 +86,8 @@ int main()
         Require(session.SetFocus(true, 0) && !session.Active() && !session.Accepts(reopened), "Losing the active ID releases an existing editor even when the IME flag is stale");
 
         Utf16Decoder decoder;
+        for (auto scalar : { 0x3042u, 0x30A2u, 0xD55Cu, 0x0627u, 0x05D0u, 0x0E01u, 0x0301u })
+            Require(decoder.Push(scalar) == std::vector<std::uint32_t>{ scalar }, "Language-neutral Unicode including combining marks");
         Require(decoder.Push(0x88D9) == std::vector<std::uint32_t>{0x88D9}, "Chinese BMP character");
         Require(decoder.Push(0x88D9) == std::vector<std::uint32_t>{0x88D9}, "Repeated Chinese character is preserved");
         Require(decoder.Push(0xD840).empty(), "Hold high surrogate across frames");

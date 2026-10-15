@@ -53,11 +53,13 @@ wardrobe close
 
 手动编辑暂缓该角色自动换装，下一次条件切换恢复，或点击“恢复自动”。关闭衣柜保留手动外观。启用自动换装时记录并关闭该角色 SOS 地点自动切换；关闭自动或移除管理时恢复原值。未加载角色的清理和恢复会延迟执行。旧预设迁移到玩家的默认条件，自动初始关闭。详细实现与验证见 [操作改进报告](docs/reports/6_life-improvement-report.md)。
 
-## 外部输入法
+## IME 集成
+
+界面设置提供 **IMM shared [1]**、**IMM private [2]**、**外部模组桥接 [3]**、自动选择与禁用模式，并带有两组快速测试输入框。原生 IMM 不依赖输入法修复模组，按 Unicode 接入各语言；共享模式复用窗口上下文，独立模式在编辑期间创建自有上下文。每条路径可持久禁用。设置、兼容性边界和独立模块迁移方法见 [通用 IME 集成](docs/PortableIme.md)。
 
 自动接入 **SimpleIME**、**Skyrim Input Method - Use System's IME**、**Input Method Unlocked**，无需为衣柜安装额外桥接 DLL。三种接入均已编译实现；IMU 在 Skyrim 1.5.97 / IMU 2.1.0 环境修正后得到用户成功反馈，另外两种仍需分别游戏验收。只启用其中一个输入法模组；同时加载多个时衣柜不申请外部输入法焦点，设置页显示冲突提示。
 
-SimpleIME 的候选窗位置请设为 **Follow Cursor** 或 **None**，其 GFx 光标定位无法直接跟随独立 ImGui 插入点。Input Method Unlocked 的运行限制依其安装版本而定，窗口 / 无边框模式及 IMM 兼容输入法是作者公布的支持范围。没有外部输入法模组时可继续使用 Ctrl+V；本插件不提供独立 IMM / TSF 后备。
+SimpleIME 的候选窗位置请设为 **Follow Cursor** 或 **None**，其 GFx 光标定位无法直接跟随独立 ImGui 插入点。Input Method Unlocked 的运行限制依其安装版本而定，窗口 / 无边框模式及 IMM 兼容输入法是作者公布的支持范围。已加载已知外部输入法模组时，原生 IMM 不接管窗口；纯 TSF text store 尚未实现。原生模式的各输入法及全屏候选窗行为仍需游戏内验收，Ctrl+V 保持可用。
 
 界面设置显示识别到的输入法。搜索、别名、备注等标准文本框共用接入；焦点退出、关闭衣柜、切出游戏或读档会清理本模组申请和待处理文字。实现与来源见 [输入法接入说明](docs/InputMethodIntegration.md)，游戏验收见 [RuntimeChecks](docs/RuntimeChecks.md)。
 

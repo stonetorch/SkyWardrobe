@@ -1,3 +1,5 @@
+#include <RE/Skyrim.h>
+
 #include "wardrobe/ActorRuntime.h"
 #include "ui/Overlay.h"
 #include "ui/IconsFontAwesome6.h"
@@ -215,6 +217,7 @@ namespace
                 if (record.down) io.AddMouseWheelEvent(0.0f, record.code == 8 ? 1.0f : -1.0f);
                 break;
             case InputRecord::Kind::kKey:
+                if (Overlay::InputMethod::FilterNativeKey(record.code, record.down)) break;
                 if (waitingForKey && record.down)
                 {
                     CaptureKey(record.code);
@@ -279,6 +282,8 @@ namespace
                 else if (key == "toggle_key") { const auto code = std::stoul(value); if (code >= 8 && code <= 254 && code != VK_ESCAPE) toggleKey = code; }
                 else if (key == "ui_scale") { const auto number = std::stof(value); if (std::isfinite(number)) uiScale = std::clamp(number, kMinScale, kMaxScale); }
                 else if (key == "cursor_sensitivity") { const auto number = std::stof(value); if (std::isfinite(number)) cursorSensitivity = std::clamp(number, kMinCursorSensitivity, kMaxCursorSensitivity); }
+                else if (key == "ime_backend") Overlay::InputMethod::Configure(static_cast<Ime::Backend>(std::stoi(value)), Overlay::InputMethod::DisabledBackends());
+                else if (key == "ime_disabled") Overlay::InputMethod::Configure(Overlay::InputMethod::RequestedBackend(), std::stoul(value));
             }
             catch (const std::exception&) { SKSE::log::warn("Invalid SkyWardrobe.ini setting"); }
         }
@@ -293,7 +298,9 @@ namespace
             std::ofstream output{ std::filesystem::path(temporary) };
             output << "hotkey_enabled=" << hotkeyEnabled << '\n' << "toggle_key=" << toggleKey << '\n'
                 << "font_path=" << fontPath << '\n' << "font_size=" << fontSize << '\n' << "small_font_size=" << smallFontSize << '\n'
-                << "ui_scale=" << uiScale << '\n' << "cursor_sensitivity=" << cursorSensitivity << '\n';
+                << "ui_scale=" << uiScale << '\n' << "cursor_sensitivity=" << cursorSensitivity << '\n'
+                << "ime_backend=" << static_cast<int>(Overlay::InputMethod::RequestedBackend()) << '\n'
+                << "ime_disabled=" << Overlay::InputMethod::DisabledBackends() << '\n';
             output.flush();
             output.close();
             if (!output) { SKSE::log::error("Cannot save overlay settings"); return; }
@@ -375,10 +382,11 @@ namespace
     {
         if (message == WM_ACTIVATEAPP && !wParam)
             Overlay::InputMethod::SetOverlayState(inputOverlayVisible.load(), false);
+        if (const auto handled = Overlay::InputMethod::HandleWindowMessage(hwnd, message, wParam, lParam)) return *handled;
         if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
         {
             // 等待菜单型输入法或 IMU 过滤后放行的 Esc，原始窗口按键不能抢先关闭衣柜。
-            const bool externalInput = Overlay::InputMethod::UsesMenuInput() || Overlay::InputMethod::UsesGameInputMethod();
+            const bool externalInput = Overlay::InputMethod::UsesMenuInput() || Overlay::InputMethod::UsesGameInputMethod() || Overlay::InputMethod::WantsTextInput();
             if (visible && !waitingForKey && !externalInput && wParam == VK_ESCAPE) { Overlay::CloseAllMenus(); return 0; }
             if (waitingForKey)
             {
@@ -474,10 +482,11 @@ namespace
             SKSE::log::error("Dear ImGui backend initialization failed");
             return false;
         }
-        // 只发布 ImGui 文本焦点；候选窗、Windows 消息和输入上下文归外部模组所有。
-        ImGui::GetPlatformIO().Platform_SetImeDataFn = [](ImGuiContext*, ImGuiViewport*, ImGuiPlatformImeData* data)
+        // 原生模式发布插入点，外部模式不触碰其上下文；坐标转换隔离在宿主适配层。
+        ImGui::GetPlatformIO().Platform_SetImeDataFn = [](ImGuiContext*, ImGuiViewport* viewport, ImGuiPlatformImeData* data)
         {
             Overlay::InputMethod::PublishTextFocus(data->WantTextInput, ImGui::GetActiveID());
+            Overlay::InputMethod::PublishCaret(data->InputPos.x - viewport->Pos.x, data->InputPos.y - viewport->Pos.y, data->InputLineHeight);
         };
         SetLastError(0);
         unicodeWindow = IsWindowUnicode(window) != FALSE;
@@ -490,6 +499,7 @@ namespace
             SKSE::log::error("Cannot attach overlay window input: {}", GetLastError());
             return false;
         }
+        Overlay::InputMethod::AttachWindow(window);
         initialized = true;
         return true;
     }
@@ -540,6 +550,7 @@ namespace
             ImGui::Render();
             // 回调不保证在输入框 ID 改变但位置不变时执行，帧尾再同步一次编辑会话。
             Overlay::InputMethod::PublishTextFocus(visible && !waitingForKey && ImGui::GetCurrentContext()->PlatformImeData.WantTextInput, ImGui::GetActiveID());
+            Overlay::InputMethod::EndFrame();
 
             ID3D11Texture2D* backBuffer = nullptr;
             ID3D11RenderTargetView* target = nullptr;
@@ -586,8 +597,8 @@ void Overlay::DrawInterfaceSettings()
     if (ImGui::Button(Tr("Change key", "修改按键"))) waitingForKey = true;
     if (ImGui::SliderFloat(Tr("UI scale", "界面缩放"), &uiScale, kMinScale, kMaxScale, "%.2fx")) SaveSettings();
     if (ImGui::SliderFloat(Tr("Pointer sensitivity", "鼠标灵敏度"), &cursorSensitivity, kMinCursorSensitivity, kMaxCursorSensitivity, "%.2fx")) SaveSettings();
-    ImGui::TextWrapped("%s", Tr("Drag window borders to resize. Ctrl+V pastes text. External IME support is shown below.", "拖动窗口边缘调整大小。Ctrl+V 粘贴文本。外部输入法接入状态见下方。"));
-    Overlay::InputMethod::DrawStatus();
+    ImGui::TextWrapped("%s", Tr("Drag window borders to resize. Ctrl+V pastes text. IME selection and tests are below.", "拖动窗口边缘调整大小。Ctrl+V 粘贴文本。下方可切换和测试 IME 实现。"));
+    if (Overlay::InputMethod::DrawStatus()) SaveSettings();
 }
 void Overlay::Install()
 {
