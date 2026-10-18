@@ -1,11 +1,62 @@
 #include "wardrobe/Store.h"
+#include "wardrobe/PlayerOutfitStorage.h"
+#include <mutex>
 #include <Windows.h>
 #include <fstream>
 
 namespace Wardrobe
 {
+    namespace
+    {
+        // 后台 JSON 写入和游戏保存触发的清理共用锁，避免旧快照重新写回玩家数据。
+        std::mutex persistenceMutex;
+
+        void WriteDatabase(const std::filesystem::path& root, const Json& database)
+        {
+            std::filesystem::create_directories(root / "AliasPacks");
+            const auto path = root / "Wardrobe.json", temporary = root / "Wardrobe.json.tmp";
+            {
+                std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+                output << database.dump(2, ' ', false) << '\n';
+                output.flush(); output.close();
+                if (!output) throw std::runtime_error("Cannot write wardrobe temporary file");
+            }
+            if (std::filesystem::exists(path))
+                std::filesystem::copy_file(path, root / "Wardrobe.json.bak", std::filesystem::copy_options::overwrite_existing);
+            if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                throw std::runtime_error("Cannot replace Wardrobe.json: " + std::to_string(GetLastError()));
+        }
+    }
+
+    void MetadataStore::SetPlayerStorageMode(PlayerOutfitStorage mode)
+    {
+        std::lock_guard lock(persistenceMutex);
+        playerOutfitStorage.store(mode);
+    }
+
+    std::string MetadataStore::CleanPlayerOutfit() const
+    {
+        std::lock_guard lock(persistenceMutex);
+        if (playerOutfitStorage.load() != PlayerOutfitStorage::SaveLocal) return {};
+        try
+        {
+            const auto path = root_ / "Wardrobe.json";
+            if (!std::filesystem::exists(path)) return {};
+            std::ifstream input(path, std::ios::binary);
+            if (!input) throw std::runtime_error("Cannot read Wardrobe.json for player cleanup");
+            Json snapshot; input >> snapshot;
+            input.close();
+            if (!snapshot.is_object()) throw std::runtime_error("Invalid Wardrobe.json for player cleanup");
+            // 没有遗留数据时不写盘；不规范化或改写其他角色及共享资源。
+            if (StripPlayerOutfit(snapshot)) WriteDatabase(root_, snapshot);
+            return {};
+        }
+        catch (const std::exception& e) { return e.what(); }
+    }
+
     bool MetadataStore::Load()
     {
+        std::lock_guard lock(persistenceMutex);
         try
         {
             Json candidate = EmptyDatabase();
@@ -16,6 +67,7 @@ namespace Wardrobe
                 if (!input) throw std::runtime_error("Cannot read Wardrobe.json");
                 input >> candidate;
             }
+            if (playerOutfitStorage.load() == PlayerOutfitStorage::SaveLocal) StripPlayerOutfit(candidate);
             ValidateDatabase(candidate);
             std::map<std::string, Json> packs;
             std::vector<std::string> packWarnings;
@@ -99,23 +151,14 @@ namespace Wardrobe
 
     bool MetadataStore::Save()
     {
+        std::lock_guard lock(persistenceMutex);
         if (!writable) return false;
         try
         {
             ValidateDatabase(database);
-            std::filesystem::create_directories(root_ / "AliasPacks");
-            const auto path = root_ / "Wardrobe.json", temporary = root_ / "Wardrobe.json.tmp";
-            {
-                std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-                output << database.dump(2, ' ', false) << '\n';
-                output.flush();
-                output.close();
-                if (!output) throw std::runtime_error("Cannot write wardrobe temporary file");
-            }
-            if (std::filesystem::exists(path))
-                std::filesystem::copy_file(path, root_ / "Wardrobe.json.bak", std::filesystem::copy_options::overwrite_existing);
-            if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-                throw std::runtime_error("Cannot replace Wardrobe.json: " + std::to_string(GetLastError()));
+            auto snapshot = database;
+            if (playerOutfitStorage.load() == PlayerOutfitStorage::SaveLocal) StripPlayerOutfit(snapshot);
+            WriteDatabase(root_, snapshot);
             error.clear();
             return true;
         }

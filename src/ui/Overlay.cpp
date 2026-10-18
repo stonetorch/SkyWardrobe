@@ -64,7 +64,7 @@ namespace
     bool lookInputSuspended = false;
     bool cursorShownByOverlay = false;
     UINT toggleKey = kDefaultKey;
-    void SaveSettings();
+    bool SaveSettings();
     std::string fontPath = "C:/Windows/Fonts/msyh.ttc";
     float fontSize = 20.0f, smallFontSize = 16.0f;
     ImFont* noteFont = nullptr;
@@ -95,7 +95,7 @@ namespace
     std::mutex inputMutex;
     std::vector<InputRecord> inputRecords;
 
-    void SaveSettings();
+    bool SaveSettings();
 
     UINT ScanCodeToVirtualKey(std::uint32_t scanCode)
     {
@@ -284,13 +284,19 @@ namespace
                 else if (key == "toggle_key") { const auto code = std::stoul(value); if (code >= 8 && code <= 254 && code != VK_ESCAPE) toggleKey = code; }
                 else if (key == "ui_scale") { const auto number = std::stof(value); if (std::isfinite(number)) uiScale = std::clamp(number, kMinScale, kMaxScale); }
                 else if (key == "cursor_sensitivity") { const auto number = std::stof(value); if (std::isfinite(number)) cursorSensitivity = std::clamp(number, kMinCursorSensitivity, kMaxCursorSensitivity); }
+                else if (key == "player_outfit_storage")
+                {
+                    if (value == "global") Wardrobe::playerOutfitStorage.store(Wardrobe::PlayerOutfitStorage::Global);
+                    else if (value == "save_local") Wardrobe::playerOutfitStorage.store(Wardrobe::PlayerOutfitStorage::SaveLocal);
+                    else SKSE::log::warn("Invalid player_outfit_storage; using global");
+                }
                 else if (key == "ime_backend") Overlay::InputMethod::Configure(static_cast<Ime::Backend>(std::stoi(value)), Overlay::InputMethod::DisabledBackends());
                 else if (key == "ime_disabled") Overlay::InputMethod::Configure(Overlay::InputMethod::RequestedBackend(), std::stoul(value));
             }
             catch (const std::exception&) { SKSE::log::warn("Invalid SkyWardrobe.ini setting"); }
         }
     }
-    void SaveSettings()
+    bool SaveSettings()
     {
         const auto path = SettingsPath();
         // 界面设置只替换自己管理的键，保留手动安全模式开关及其他用户配置。
@@ -305,7 +311,8 @@ namespace
                 const auto first = key.find_first_not_of(" \t\r");
                 key = first == std::string::npos ? "" : key.substr(first, key.find_last_not_of(" \t\r") - first + 1);
                 if (key != "hotkey_enabled" && key != "toggle_key" && key != "font_path" && key != "font_size" &&
-                    key != "small_font_size" && key != "ui_scale" && key != "cursor_sensitivity" && key != "safe_mode_on_unclean_exit")
+                    key != "small_font_size" && key != "ui_scale" && key != "cursor_sensitivity" && key != "safe_mode_on_unclean_exit" &&
+                    key != "player_outfit_storage")
                     preserved.push_back(line);
             }
         }
@@ -319,14 +326,19 @@ namespace
                 << "ui_scale=" << uiScale << '\n' << "cursor_sensitivity=" << cursorSensitivity << '\n'
                 << "ime_backend=" << static_cast<int>(Overlay::InputMethod::RequestedBackend()) << '\n'
                 << "ime_disabled=" << Overlay::InputMethod::DisabledBackends() << '\n';
+            output << "player_outfit_storage=" << (Wardrobe::playerOutfitStorage.load() == Wardrobe::PlayerOutfitStorage::Global ? "global" : "save_local") << '\n';
             output << "safe_mode_on_unclean_exit=" << Wardrobe::SafeMode::Get().AutomaticRecovery() << '\n';
             for (const auto& line : preserved) output << line << '\n';
             output.flush();
             output.close();
-            if (!output) { SKSE::log::error("Cannot save overlay settings"); return; }
+            if (!output) { SKSE::log::error("Cannot save overlay settings"); return false; }
         }
         if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
             SKSE::log::error("Cannot replace overlay settings: {}", GetLastError());
+            return false;
+        }
+        return true;
     }
     std::string KeyName(UINT key)
     {
@@ -612,6 +624,24 @@ void Overlay::Open()
 void Overlay::DrawInterfaceSettings()
 {
     using Wardrobe::Tr;
+    auto& service = Wardrobe::Service::Get();
+    const auto previousStorage = Wardrobe::playerOutfitStorage.load();
+    int storage = previousStorage == Wardrobe::PlayerOutfitStorage::Global ? 0 : 1;
+    if (ImGui::Combo(Tr("Player outfit storage", "玩家搭配存储方式"), &storage,
+        Tr("Global\0Save local\0", "全局\0存档局部\0")))
+    {
+        service.SetPlayerStorage(storage == 0 ? Wardrobe::PlayerOutfitStorage::Global : Wardrobe::PlayerOutfitStorage::SaveLocal);
+        if (!SaveSettings())
+        {
+            service.SetPlayerStorage(previousStorage);
+            service.status = Tr("Cannot save player outfit storage setting", "无法保存玩家搭配存储方式设置");
+        }
+    }
+    ImGui::TextWrapped("%s", Wardrobe::playerOutfitStorage.load() == Wardrobe::PlayerOutfitStorage::Global ?
+        Tr("Player outfits are saved in JSON. Loading an old game does not restore old outfits.",
+            "玩家搭配保存到 JSON，加载旧游戏存档不会回滚搭配。") :
+        Tr("Save the game to keep player outfit edits, including safe-mode repairs. Loading an older game restores its outfits.",
+            "玩家搭配修改（包括安全模式修复）需要保存游戏。读取旧存档会恢复其中的旧搭配。"));
     auto& safety = Wardrobe::SafeMode::Get();
     bool automaticRecovery = safety.AutomaticRecovery();
     if (ImGui::Checkbox(Tr("Recover crashes within 5s of SOSBackend calls", "SOSBackend 调用后 5 秒内崩溃时自动进入安全模式"), &automaticRecovery))

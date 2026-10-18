@@ -1,5 +1,6 @@
 #pragma once
 #include "wardrobe/Model.h"
+#include "wardrobe/PlayerOutfitStorage.h"
 #include <filesystem>
 #include <map>
 
@@ -11,6 +12,8 @@ namespace Wardrobe
         explicit MetadataStore(std::filesystem::path root) : root_(std::move(root)) {}
         bool Load();
         bool Save();
+        std::string CleanPlayerOutfit() const;
+        static void SetPlayerStorageMode(PlayerOutfitStorage mode);
         bool WriteAliasTemplate(const std::string& plugin, const Json& items, bool overwrite);
         std::string SaveSnapshot(Json snapshot) const;
         Json Effective(std::string_view key) const;

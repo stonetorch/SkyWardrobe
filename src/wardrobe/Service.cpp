@@ -33,6 +33,11 @@ namespace Wardrobe
             catch (const std::exception& e) { store.error = e.what(); }
             status = store.error.empty() ? "Saved" : store.error;
         }
+        if (auto error = TakePlayerPersistenceError(); !error.empty())
+        {
+            store.error = std::move(error);
+            status = store.error;
+        }
         if (!saveQueued_) return;
         try
         {
@@ -87,6 +92,14 @@ namespace Wardrobe
         SKSE::log::info("Catalog: {} armors from {} plugins", catalog.size(), plugins.size());
     }
 
+    void Service::SetPlayerStorage(PlayerOutfitStorage mode)
+    {
+        // 切换只改变后续保存/读取的归属，当前内存搭配继续保留。
+        FlushSave();
+        MetadataStore::SetPlayerStorageMode(mode);
+        StoreActorContext();
+    }
+
     void Service::Reload()
     {
         FlushSave();
@@ -95,8 +108,12 @@ namespace Wardrobe
         for (auto& [key, generation] : actorGeneration_) ++generation;
         autoBusy_.clear();
         { std::lock_guard lock(autoMutex_); autoCompletions_.clear(); }
+        const auto player = store.database.contains("actors") && store.database["actors"].is_object() ?
+            store.database["actors"].value("player", NewActorProfile("Player")) : NewActorProfile("Player");
         if (store.Load())
         {
+            if (playerOutfitStorage.load() == PlayerOutfitStorage::SaveLocal)
+                RestorePlayerOutfit(store.database["actors"]["player"], Json{{"player", player}});
             ClearPinyinSearchCache();
             indexedCategories_ = nullptr;
             indexedPlugins_ = nullptr;
@@ -104,7 +121,7 @@ namespace Wardrobe
             currentActor = "player";
             working = ActorProfile()["workingItems"].get<std::vector<std::string>>();
             activePreset = ActorProfile().value("activePreset", "");
-            presetBaseline_ = working;
+            presetBaseline_ = ActorProfile().value("baseline", working);
             undo_ = nullptr;
             status = "JSON loaded";
             RebuildIndex();
@@ -609,10 +626,22 @@ namespace Wardrobe
         for (auto& [key, actor] : store.database["actors"].items())
         {
             unavailableActors_.insert(key);
-            if (actor.value("actualEquipmentMode", "off") == "off") equipmentCleanupPending_.insert(key);
-            actor["runtime"] = Json::object(); actor.erase("presetRuntime"); actor["manual"] = false; actor.erase("manualState");
+            if (key == "player")
+            {
+                if (playerOutfitStorage.load() == PlayerOutfitStorage::SaveLocal) ResetPlayerOutfit(actor);
+            }
+            else
+            {
+                actor["runtime"] = Json::object(); actor.erase("presetRuntime"); actor["manual"] = false; actor.erase("manualState");
+            }
             actor["takeoverPending"] = actor.value("managed", true) && actor.value("automatic", false);
+            if (actor.value("actualEquipmentMode", "off") == "off") equipmentCleanupPending_.insert(key);
         }
+        ++revision;
+        working = ActorProfile()["workingItems"].get<std::vector<std::string>>();
+        activePreset = ActorProfile().value("activePreset", "");
+        presetBaseline_ = ActorProfile().value("baseline", working);
+        undo_ = nullptr; undoGroup_ = nullptr;
         actorSnapshot = {}; nextActorPoll_ = {};
         PublishActorState(store.database["actors"]);
         std::lock_guard lock(autoMutex_); autoCompletions_.clear();
@@ -675,9 +704,12 @@ namespace Wardrobe
         if (!SosBackend::Get().IsInstalled() || !store.writable) return;
         if (auto loaded = TakeLoadedActorState())
         {
-            // 配置仍共享 JSON；实际结果及轮换进度以正在加载的存档为准。
+            // 玩家整组状态由所选来源恢复；NPC 继续沿用既有逐字段合并规则。
+            if (playerOutfitStorage.load() == PlayerOutfitStorage::SaveLocal)
+                RestorePlayerOutfit(store.database["actors"]["player"], *loaded);
             for (auto& [key, profile] : store.database["actors"].items())
             {
+                if (key == "player") continue;
                 if (!loaded->contains(key)) { profile["runtime"] = Json::object(); profile.erase("presetRuntime"); continue; }
                 const auto& saved = (*loaded)[key];
                 for (const auto* field : {"runtime", "presetRuntime", "workingItems", "activePreset", "baseline", "manual", "manualState", "automatic", "actualEquipmentMode", "releasePending", "backupItems", "backupEnabled", "originalEnabled", "hiddenSlots", "appearanceActive"})
@@ -688,8 +720,9 @@ namespace Wardrobe
             if (!MultiplePresets())
             {
                 // 旧存档可带回其他活动预设；默认模式不接受这个绑定。
-                for (auto& profile : store.database["actors"])
+                for (auto& [key, profile] : store.database["actors"].items())
                 {
+                    if (key == "player" && playerOutfitStorage.load() == PlayerOutfitStorage::Global) continue;
                     const auto current = profile.value("activePreset", "");
                     const auto pinned = profile.value("defaultPreset", "");
                     if (current != pinned)
@@ -701,6 +734,12 @@ namespace Wardrobe
                 }
                 EnsureDefaultPresets(store.database);
             }
+            // 清理依据恢复后的模式决定，不能沿用上一存档的装备模式。
+            equipmentCleanupPending_.clear();
+            for (const auto& [key, profile] : store.database["actors"].items())
+                if (profile.value("actualEquipmentMode", "off") == "off") equipmentCleanupPending_.insert(key);
+            store.database["actors"]["player"]["takeoverPending"] =
+                store.database["actors"]["player"].value("automatic", false);
             working = ActorProfile()["workingItems"].get<std::vector<std::string>>();
             activePreset = ActorProfile().value("activePreset", "");
             presetBaseline_ = ActorProfile().value("baseline", working);

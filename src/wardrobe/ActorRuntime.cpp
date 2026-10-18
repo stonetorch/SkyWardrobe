@@ -2,6 +2,8 @@
 #include "wardrobe/SosBackend.h"
 #include "wardrobe/ActorRuntime.h"
 #include "wardrobe/Model.h"
+#include "wardrobe/PlayerOutfitStorage.h"
+#include "wardrobe/Store.h"
 #include <map>
 #include <mutex>
 #include <atomic>
@@ -19,6 +21,7 @@ namespace Wardrobe
         std::atomic<std::uint64_t> sessionEpoch{};
         Json publishedState = Json::object();
         std::optional<Json> loadedState;
+        std::string persistenceError;
 
         bool IsPerson(RE::Actor* actor)
         {
@@ -148,7 +151,13 @@ namespace Wardrobe
         for (const auto& [key, form] : dynamicActors) write(bindingRecord, key, form);
         for (const auto& [key, value] : originalAuto) write(autoRecord, key, value ? 1u : 0u);
         std::lock_guard lock(snapshotMutex);
-        const auto state = publishedState.dump();
+        const auto mode = playerOutfitStorage.load();
+        const auto state = ActorStateForSave(publishedState, mode).dump();
+        if (mode == PlayerOutfitStorage::SaveLocal)
+        {
+            persistenceError = MetadataStore("Data/SKSE/Plugins/SkyWardrobe").CleanPlayerOutfit();
+            if (!persistenceError.empty()) SKSE::log::error("Player outfit JSON cleanup failed: {}", persistenceError);
+        }
         if (!serialization->WriteRecord(stateRecord, 1, state.data(), static_cast<std::uint32_t>(state.size())))
             SKSE::log::error("Cannot save actor outfit state");
     }
@@ -162,9 +171,8 @@ namespace Wardrobe
             {
                 auto value = Json::parse(text);
                 if (!value.is_object()) return;
-                Json check = EmptyDatabase(); check["actors"] = value;
-                ValidateDatabase(check);
-                std::lock_guard lock(snapshotMutex); loadedState = std::move(check["actors"]);
+                auto actors = ActorStateForLoad(std::move(value), playerOutfitStorage.load());
+                std::lock_guard lock(snapshotMutex); loadedState = std::move(actors);
             }
             catch (const std::exception& error) { SKSE::log::warn("Invalid actor state in co-save: {}", error.what()); }
             return;
@@ -186,6 +194,11 @@ namespace Wardrobe
         ++sessionEpoch;
         dynamicActors.clear(); originalAuto.clear();
         std::lock_guard lock(snapshotMutex); snapshot.reset(); watched.reset(); loadedState.reset(); publishedState = Json::object();
+    }
+    std::string TakePlayerPersistenceError()
+    {
+        std::lock_guard lock(snapshotMutex);
+        auto result = std::move(persistenceError); persistenceError.clear(); return result;
     }
     void PublishActorState(Json state)
     {

@@ -31,6 +31,7 @@ namespace Wardrobe
     void ResetActorBindings();
     std::optional<bool> OriginalAutoSwitch(const std::string& key);
     void RememberAutoSwitch(const std::string& key, std::optional<bool> value);
+    std::string TakePlayerPersistenceError();
     void PublishActorState(nlohmann::json state);
     std::optional<nlohmann::json> TakeLoadedActorState();
 }

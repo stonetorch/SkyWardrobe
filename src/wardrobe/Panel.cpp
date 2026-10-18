@@ -1094,6 +1094,9 @@ namespace Wardrobe
             ImGui::TextWrapped("%s", SafeMode::Get().Reason().c_str());
             ImGui::TextWrapped("%s", Tr("Edit and save your wardrobe to remove faulty outfits. Preview and equipment changes are paused.",
                 "请在衣柜、预设及服装组中移除问题服装并保存。预览、外观覆盖和实际装备操作均已暂停。"));
+            if (playerOutfitStorage.load() == PlayerOutfitStorage::SaveLocal)
+                ImGui::TextWrapped("%s", Tr("Save the game after repairing player outfits. Loading an older save restores its old outfits.",
+                    "玩家搭配使用存档局部存储：修复后请保存游戏，读取旧存档仍会恢复其中的旧搭配。"));
             if (!SafeMode::Get().Error().empty()) ImGui::TextWrapped("%s", SafeMode::Get().Error().c_str());
             if (ImGui::Button(Tr("Exit safe mode and resume outfits", "退出安全模式并恢复换装"))) service.ExitSafeMode();
             ImGui::TextWrapped("%s", Tr("This deletes all SAFEMODE trigger files. INI safe_mode=1 will request safe mode again on the next launch.",
