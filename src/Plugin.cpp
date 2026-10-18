@@ -54,9 +54,9 @@ namespace
     void OnDataLoaded()
     {
         Wardrobe::SosBackend::Get().DetectInstallation();
+        Overlay::Install();
         Wardrobe::Service::Get().Initialize();
         Wardrobe::InstallConsole();
-        Overlay::Install();
         SKSE::log::info("Game data loaded");
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
             console->Print("[SkyWardrobe] Loaded. Type wardrobe to open.");

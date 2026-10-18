@@ -32,7 +32,7 @@ FormKey 示例：`Clothes.esp|000ABC`；普通 ESP 最多 24 位本地 ID，ESL 
 
 每个预设归属一个 actor。rules 的键为 combat、dungeon、city、town、default，值为 `{ "enabled": true, "mode": "random", "groups": ["groups:a", "groups:b"] }`。mode 支持 single、random、sequence。组内穿搭仍是随机槽位互斥选择，不递归收集引用组。actor.runtime 保存最近成功的 items、state、group、条件 signature、各条件 progress.last，以及战斗前 resume；presetRuntime 按预设保存独立进度。工作搭配和自动结果分离。
 
-co-save 沿用 SWDE serialization ID：实际装备记录 1/2 使用版本 2，增加角色归属，并兼容版本 1 的玩家记录；记录 3 保存动态引用绑定，4 保存接管前 SOS 自动切换值，5 保存角色上下文快照。载入存档时，结果、轮换进度、工作搭配、选中预设和装备/自动模式从该存档恢复，目录与规则定义仍从 JSON 读取。角色管理的移除状态保持当前 JSON 决定。配置缺少新字段时渐进补全，旧预设归属玩家并迁移到默认条件，自动初始关闭。
+co-save 沿用 SWDE serialization ID：实际装备记录 1/2 使用版本 2，增加角色归属，并兼容版本 1 的玩家记录；记录 3 保存动态引用绑定，4 保存接管前 SOS 自动切换值，5 保存角色上下文快照。NPC 的结果、轮换进度、工作搭配、选中预设和装备/自动模式继续从该存档恢复。玩家是否参与记录 5 由 INI 中的玩家搭配存储方式决定，详见下节。目录与规则定义仍从 JSON 读取。角色管理的移除状态保持当前 JSON 决定。配置缺少新字段时渐进补全，旧预设归属玩家并迁移到默认条件，自动初始关闭。
 
 服装原名、别名、备注、分类、插件别名及预设名称中的中文通过 cpp-pinyin 自动生成无声调拼音索引，无需维护拼音表。支持全拼、连续首字母和连续音节前缀组合：`裙子` 可用 `qun zi`、`qunzi`、`qz`、`qzi`、`qu zi` 搜索；`黑色连衣裙` 可用 `hslyq`、`lyq`、`lianyiqun`、`heiselyq` 搜索。忽略 ASCII 空格和大小写；匹配不会跳过音节，也不会跳过单个音节内部的字母。原文匹配排序优先于自动拼音匹配。
 
@@ -48,7 +48,7 @@ custom1 custom2 custom3 custom4 custom5 custom6 custom7 custom8
 
 biped 槽位掩码只从游戏扫描，语义部件仅用于分类显示。部件修改不会修改 ARMO 槽位。
 
-`actualEquipmentMode` 为全局衣柜设置，不随预设切换；旧 JSON 缺失时自动补为 `off`，非法值拒绝载入。服装实际穿戴通过原版 `ActorEquipManager` 完成，会改变装备属性和效果。临时物品实例与衣柜实际穿戴记录保存在对应存档的 SKSE co-save 中，不写入全局 Wardrobe.json；读档重置旧世界记账，再按该存档恢复并解析 FormID。
+`actualEquipmentMode` 为逐角色搭配设置，不随预设切换；玩家字段随所选玩家搭配存储方式保存，NPC 规则保持不变。旧 JSON 缺失时自动补为 `off`，非法值拒绝载入。服装实际穿戴通过原版 `ActorEquipManager` 完成，会改变装备属性和效果。临时物品实例与衣柜实际穿戴记录保存在对应存档的 SKSE co-save 中，不写入全局 Wardrobe.json；读档重置旧世界记账，再按该存档恢复并解析 FormID。
 
 ## 别名包
 
@@ -128,3 +128,21 @@ biped 槽位掩码只从游戏扫描，语义部件仅用于分类显示。部�
 ```
 
 关闭多预设增强功能时，预设快捷格子的绑定保留但按钮隐藏，快捷编辑器不提供预设操作，控制台预设切换也被禁用。
+
+
+## 玩家搭配存储方式
+
+全局配置文件 `Data/SKSE/Plugins/SkyWardrobe.ini` 使用 `player_outfit_storage=global`（缺省值）或 `player_outfit_storage=save_local`。设置位于面板「设置」中的「玩家搭配存储方式」，不写入 JSON 或 co-save，不随读档变化。无法写入 INI 时界面报告错误并恢复原模式。
+
+玩家搭配状态作为一个整体选择来源，完整字段为：`workingItems`、`backupItems`、`backupEnabled`、`backupGroup`、`originalEnabled`、`hiddenSlots`、`activePreset`、`baseline`、`automatic`、`actualEquipmentMode`、`runtime`、`presetRuntime`、`manual`、`manualState`、`releasePending`、`takeoverPending`、`appearanceActive`。自动结果、战斗前恢复记录与轮换进度包含在 `runtime` / `presetRuntime` 中。`takeoverPending` 在世界重置时按当前自动模式重新安排引擎接管。
+
+`name`、`managed`、`defaultPreset` 保留在 JSON：它们分别是角色显示信息、管理标记和默认预设定义的固定绑定；预设定义及其规则、物品元数据、服装组、多预设增强开关、目录与界面设置始终共享。关闭多预设增强功能时，活动预设仍遵守固定默认预设规则。
+
+- **全局**：玩家搭配从 JSON 读取并异步保存，不必保存游戏。新 co-save 记录 5 只保留 NPC；旧记录中的玩家条目在解析验证前丢弃。加载旧游戏存档保留当前全局玩家搭配与自动进度，不将旧玩家快照写回 JSON。
+- **存档局部**：玩家搭配保留在内存并写入 co-save 记录 5，需要保存游戏才能持久化。JSON 写入经过正常校验后，再从输出快照移除上述玩家字段及根级兼容镜像，避免校验补默认值后重新落盘。内存中的编辑不被清理。重载 JSON 保留当前内存玩家搭配，只重载共享数据。
+- **局部旧档与新游戏**：没有玩家记录时，以空工作搭配、空后备搭配、后备启用、原版透出关闭、隐藏槽位 0、自动关闭、实际装备 off、外观未激活初始化；基线、手动覆盖、自动结果及轮换进度全部清空。读取局部快照时先重置整组字段，再恢复快照内字段，缺失字段不会沿用之前存档的值。
+- **切换模式**：保留当前内存搭配，不立即迁移或清理文件。切到全局后首次衣柜保存将当前搭配写入 JSON，下一次读取游戏存档忽略其玩家快照；切到局部后首次游戏保存将当前搭配写入 co-save，下一次游戏读档使用所读存档的快照（缺少记录则初始化为空）。重启时全局从 JSON 恢复，局部等待所加载存档恢复。
+
+局部模式的普通衣柜保存及游戏保存都会在各自保存路径处理遗留 JSON。游戏保存直接读取磁盘并清除上述字段，没有遗留字段时不改写文件；所有 JSON 写入与模式切换共用互斥锁，后台旧快照不能把局部玩家搭配重新写回。清理保留其他角色与共享配置；失败时保留原文件并记录日志，面板错误区可查看并重试。全局 JSON 写入失败也通过现有错误区报告。
+
+此模式不影响记录 1/2 的临时物品与实际穿戴记账、记录 3 的动态引用绑定、记录 4 的 SOS 原自动切换值。安全模式暂停应用，存储语义保持不变：局部模式中修复搭配后必须保存游戏，读取尚未修复的旧存档仍会恢复其旧搭配。历史实施报告中的无条件玩家 co-save 恢复描述已由本节取代。

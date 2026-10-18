@@ -158,3 +158,10 @@ build/vs2022/Data/SKSE/Plugins/Debug/SkyWardrobe.dll
 SOS 的原生函数签名核对自 [SkyrimOutfitSystemNativeFuncs.psc](https://github.com/lispcoc/SkyrimOutfitSystemSE/blob/master/src/papyrus/skyrimoutfitsystemnativefuncs.psc)，语义核对自 [OutfitSystem.cpp](https://github.com/lispcoc/SkyrimOutfitSystemSE/blob/master/src/cpp/OutfitSystem.cpp)。独立前端调用方式参考 [SosGui](https://github.com/cyfewlp/SosGui)，未复制其实现或 SOS 的外观引擎源码。
 
 控制台注册复用引擎未使用槽位；若没有未使用槽位，则使用遗留 `SetDebugText` 调试命令槽，保留 opcode 并使用引擎字符串参数编译器。已占用全部这些槽位的其他控制台扩展需要检查兼容性。
+
+
+## 玩家搭配保存
+
+在「设置 → 玩家搭配存储方式」选择「全局」（默认）或「存档局部」。全局模式自动将玩家搭配写入 `Wardrobe.json`，加载旧存档不会回滚；存档局部模式需保存游戏，各存档拥有自己的搭配，旧档没有玩家搭配记录时从空搭配开始。NPC 和临时物品记账保留原有存档行为。
+
+切换模式保留当前搭配，后续保存和读档按新模式处理；切换本身不清理文件。局部模式保存时会清除 JSON 中遗留的玩家搭配，保留 NPC、服装组和共享配置。安全模式下修复局部搭配后也需要保存游戏；重新读取旧档会恢复旧搭配。详细字段和边界见 [数据格式](docs/DataFormat.md#玩家搭配存储方式)。

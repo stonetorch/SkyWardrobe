@@ -1,5 +1,6 @@
 #pragma once
 #include "wardrobe/Store.h"
+#include "wardrobe/PlayerOutfitStorage.h"
 #include <mutex>
 #include <future>
 #include "wardrobe/ActorRuntime.h"
@@ -26,6 +27,7 @@ namespace Wardrobe
         void PollSave();
         void Initialize();
         void Reload();
+        void SetPlayerStorage(PlayerOutfitStorage mode);
         void Apply(bool clear = false, bool persist = true);
         ActualEquipmentMode EquipmentMode() const;
         void SetEquipmentMode(ActualEquipmentMode mode);
