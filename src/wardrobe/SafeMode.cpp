@@ -30,20 +30,35 @@ namespace Wardrobe
             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file == INVALID_HANDLE_VALUE)
         {
-            error_ = "Cannot create session marker: " + path.string();
             return false;
         }
-        constexpr char contents[] = "SkyWardrobe session has not exited normally.\n";
+        constexpr char contents[] = "SOSBackend risk window v1\n";
         DWORD written = 0;
         const bool success = WriteFile(file, contents, sizeof(contents) - 1, &written, nullptr) &&
             written == sizeof(contents) - 1 && FlushFileBuffers(file);
         CloseHandle(file);
-        if (!success) error_ = "Cannot flush session marker: " + path.string();
         return success;
+    }
+
+    bool SafeMode::RecordBackendCall()
+    {
+        std::lock_guard lock(windowMutex_);
+        if (Active()) return false;
+        if (!AutomaticRecovery()) return true;
+        // 调用前落盘，覆盖 native 调用本身发生 CTD 的情况；连续调用延长窗口。
+        if (!WriteMarker()) return false;
+        windowDeadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        windowChanged_.notify_all();
+        return true;
     }
 
     void SafeMode::Initialize(const std::filesystem::path& directory)
     {
+        if (windowWorker_.joinable())
+        {
+            windowWorker_.request_stop(); windowChanged_.notify_all(); windowWorker_.join();
+        }
+        windowDeadline_ = {};
         directory_ = directory;
         error_.clear(); reason_.clear(); active_.store(false);
         bool requested = false;
@@ -68,14 +83,39 @@ namespace Wardrobe
         try
         {
             std::filesystem::create_directories(directory_);
-            if (automaticRecovery_ && std::filesystem::exists(directory_ / "Session.running"))
-                Enter("Previous session did not exit normally / 上次运行未正常退出");
+            std::ifstream previous(directory_ / "Session.running");
+            std::string marker;
+            std::getline(previous, marker);
+            previous.close();
+            if (automaticRecovery_ && marker == "SOSBackend risk window v1")
+                Enter("Abnormal exit within 5s of SOSBackend call / SOSBackend 调用后 5 秒内异常退出");
+            // 旧版的整会话标记不再作为进入条件，也不把上次窗口带入本次会话。
+            std::filesystem::remove(directory_ / "Session.running");
             if (requested) Enter("INI: safe_mode=1");
             for (const auto& entry : std::filesystem::directory_iterator(directory_))
                 if (entry.is_regular_file() && IsTrigger(entry.path()))
                     Enter("SAFEMODE file / SAFEMODE 文件");
-            // 标记在任何外观操作前同步落盘；退出安全模式不清除它。
-            if (!WriteMarker()) Enter("Session marker unavailable / 无法记录运行状态");
+            windowWorker_ = std::jthread([this](std::stop_token stop)
+            {
+                std::unique_lock lock(windowMutex_);
+                while (!stop.stop_requested())
+                {
+                    if (windowDeadline_ == std::chrono::steady_clock::time_point{})
+                        windowChanged_.wait(lock, [&] { return stop.stop_requested() || windowDeadline_ != std::chrono::steady_clock::time_point{}; });
+                    else
+                    {
+                        const auto deadline = windowDeadline_;
+                        if (!windowChanged_.wait_until(lock, deadline, [&] { return stop.stop_requested() || windowDeadline_ != deadline; }))
+                        {
+                            // 独立线程到期解除保护，不依赖游戏帧、菜单或异步回调继续运行。
+                            std::error_code error;
+                            std::filesystem::remove(directory_ / "Session.running", error);
+                            if (error) windowChanged_.wait_for(lock, std::chrono::milliseconds(100));
+                            else windowDeadline_ = {};
+                        }
+                    }
+                }
+            });
         }
         catch (const std::exception& exception)
         {
@@ -105,14 +145,17 @@ namespace Wardrobe
 
     bool SafeMode::Leave()
     {
-        if (!RemoveTriggers() || !WriteMarker()) return false;
+        if (!RemoveTriggers()) return false;
         active_.store(false); reason_.clear();
         return true;
     }
 
     void SafeMode::NormalExit()
     {
+        std::lock_guard lock(windowMutex_);
+        windowDeadline_ = {};
         std::error_code error;
         std::filesystem::remove(directory_ / "Session.running", error);
+        windowChanged_.notify_all();
     }
 }

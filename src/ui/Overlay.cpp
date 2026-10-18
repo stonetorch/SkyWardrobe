@@ -614,13 +614,13 @@ void Overlay::DrawInterfaceSettings()
     using Wardrobe::Tr;
     auto& safety = Wardrobe::SafeMode::Get();
     bool automaticRecovery = safety.AutomaticRecovery();
-    if (ImGui::Checkbox(Tr("Enter safe mode after an abnormal exit", "异常退出后自动进入安全模式"), &automaticRecovery))
+    if (ImGui::Checkbox(Tr("Recover crashes within 5s of SOSBackend calls", "SOSBackend 调用后 5 秒内崩溃时自动进入安全模式"), &automaticRecovery))
     {
         safety.SetAutomaticRecovery(automaticRecovery);
         SaveSettings();
     }
-    ImGui::TextWrapped("%s", Tr("Applies on the next launch. Abnormal exits include crashes, forced termination and power loss.",
-        "下次启动时生效。异常退出包括崩溃、强制结束和断电。"));
+    ImGui::TextWrapped("%s", Tr("Each backend call opens a 5-second window. Only abnormal exits within this window request safe mode on the next launch.",
+        "每次后端调用重新开启 5 秒窗口，仅在窗口内异常退出才会在下次启动时自动进入安全模式。"));
     if (!safety.Active() && ImGui::Button(Tr("Enter safe mode", "进入安全模式"))) Wardrobe::Service::Get().EnterSafeMode();
     if (ImGui::Checkbox(Tr("Enable opening hotkey", "启用打开快捷键"), &hotkeyEnabled)) SaveSettings();
     ImGui::Text("%s: %s", Tr("Hotkey", "快捷键"), waitingForKey ? Tr("Press a key (Esc cancels)", "按下新按键（Esc 取消）") : KeyName(toggleKey).c_str());

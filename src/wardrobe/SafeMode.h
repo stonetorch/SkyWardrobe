@@ -2,6 +2,10 @@
 #include <atomic>
 #include <filesystem>
 #include <string>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 
 namespace Wardrobe
 {
@@ -17,13 +21,18 @@ namespace Wardrobe
         bool RemoveTriggers();
         bool Leave();
         void NormalExit();
+        bool RecordBackendCall();
         const std::string& Reason() const { return reason_; }
         const std::string& Error() const { return error_; }
         static bool IsTrigger(const std::filesystem::path& path);
     private:
         bool WriteMarker();
         std::atomic<bool> active_{false};
-        bool automaticRecovery_{true};
+        std::atomic<bool> automaticRecovery_{true};
+        std::mutex windowMutex_;
+        std::condition_variable windowChanged_;
+        std::jthread windowWorker_;
+        std::chrono::steady_clock::time_point windowDeadline_{};
         std::filesystem::path directory_;
         std::string reason_, error_;
     };

@@ -143,6 +143,8 @@ namespace Wardrobe
                     { backend.Finish(epoch, "SOS selected outfit readback failed"); return; }
                     if (!clear)
                     {
+                        if (!SafeMode::Get().RecordBackendCall())
+                        { backend.Finish(epoch, "Cannot arm equipment crash recovery window"); return; }
                         const auto error = ApplyActualEquipment(actualArmors, mode, player);
                         if (!error.empty()) { backend.Finish(epoch, "SOS appearance refreshed; " + error); return; }
                     }
@@ -163,6 +165,8 @@ namespace Wardrobe
                 }
                 auto self = shared_from_this();
                 if (!backend.CurrentActor(epoch, actorKey, version)) return;
+                if (!SafeMode::Get().RecordBackendCall())
+                { backend.Finish(epoch, "Cannot arm SOSBackend crash recovery window"); return; }
                 RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback(new Completion([self](auto value) { self->Next(value); }));
                 if (!vm->DispatchStaticCall(scriptClass, function, arguments, callback))
                     backend.Finish(epoch, std::string("SOS API unavailable: ") + function);
@@ -196,7 +200,7 @@ namespace Wardrobe
         {
             if (!CurrentActor(epoch, actor, version)) return;
             auto* target = ResolveActor(actor);
-            if (target && target->Is3DLoaded()) ClearTemporaryEquipment(target);
+            if (target && target->Is3DLoaded() && SafeMode::Get().RecordBackendCall()) ClearTemporaryEquipment(target);
         });
     }
 
@@ -330,6 +334,8 @@ namespace Wardrobe
         // 清除临时物品独立于 SOS 启用状态；玩家已有服装保留当前穿戴。
         if (operation->clear)
         {
+            if (!SafeMode::Get().RecordBackendCall())
+            { Finish(operation->epoch, "Cannot arm equipment crash recovery window"); return; }
             const auto error = ClearTemporaryEquipment(actor);
             if (!error.empty()) { Finish(operation->epoch, error); return; }
         }
