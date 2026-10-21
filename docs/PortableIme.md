@@ -1,3 +1,5 @@
+> 历史实现文档：2026-10-21 起插件 UI 使用 FLICK 标准输入控件，本文所述独立 IME 接入不再参与插件构建。当前接入见 [FLICK 迁移说明](FlickMigration.md)。
+
 # 可切换的 IME 集成
 
 本次新增原生 Windows IMM 支持，面向所有通过 IMM 或 TSF 的 IMM 兼容层工作的输入法，不按语言、输入法品牌或输入文字选择实现。纯 TSF text store 尚未实现；不能把 IMM 支持等同于所有 TSF 输入服务都兼容。

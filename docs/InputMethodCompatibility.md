@@ -1,3 +1,5 @@
+> 历史实现文档：2026-10-21 起插件 UI 使用 FLICK 标准输入控件，本文所述独立 IME 接入不再参与插件构建。当前接入见 [FLICK 迁移说明](FlickMigration.md)。
+
 # UI 输入法兼容性方案
 
 调研日期：2026-10-05。本文保存前期方案；外部模组接入已按后续请求实现，当前行为与补充核对见 [InputMethodIntegration.md](InputMethodIntegration.md)。独立 IMM 后备没有实现，Skyrim 内输入法验收尚未进行。外部项目的接入证据见 [外部输入法调研](reports/ime-external-research.md)。

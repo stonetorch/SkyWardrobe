@@ -11,19 +11,19 @@ int manualPage = -1;
 
 void MarkManualAnchor(ManualTarget target)
 {
-    if (!ImGui::IsItemVisible()) return;
+    if (!FlickUi::IsItemVisible()) return;
     auto& anchor = manualAnchors[static_cast<std::size_t>(target)];
     // 与当前裁剪区取交集，让部分滚出区域的按钮仍指向屏幕内的部分。
-    const auto clipMin = ImGui::GetWindowDrawList()->GetClipRectMin();
-    const auto clipMax = ImGui::GetWindowDrawList()->GetClipRectMax();
-    const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+    const auto clipMin = FlickUi::GetWindowDrawList()->GetClipRectMin();
+    const auto clipMax = FlickUi::GetWindowDrawList()->GetClipRectMax();
+    const auto min = FlickUi::GetItemRectMin(), max = FlickUi::GetItemRectMax();
     anchor = {ImVec2(std::max(min.x, clipMin.x), std::max(min.y, clipMin.y)),
         ImVec2(std::min(max.x, clipMax.x), std::min(max.y, clipMax.y)), true};
 }
 
 bool BeginManualTab(const char* label, ManualTarget target, ImGuiTabItemFlags flags = 0)
 {
-    const bool active = ImGui::BeginTabItem(label, nullptr, flags);
+    const bool active = FlickUi::BeginTabItem(label, nullptr, flags);
     MarkManualAnchor(target);
     return active;
 }
@@ -95,109 +95,109 @@ const auto manualLessons = std::to_array<ManualLesson>({
 void DrawManualExamples(int page)
 {
     if (page > 4 && page != 6) return;
-    ImGui::SeparatorText(Tr("Examples (no effect)", "操作示例（无实际效果）"));
+    FlickUi::SeparatorText(Tr("Examples (no effect)", "操作示例（无实际效果）"));
     // 直接复用 ImGui 的原生控件和当前主题，点击结果仅丢弃，不调用业务接口。
-    ImGui::PushID("Manual examples");
+    FlickUi::PushID("Manual examples");
     if (page == 0)
     {
         bool preview = true;
-        ImGui::Checkbox(Tr("Preview", "预览"), &preview);
-        ImGui::SameLine(); ImGui::Button(Tr("Apply", "应用"));
-        ImGui::SmallButton("x"); ImGui::SameLine();
-        ImGui::Selectable(Tr("Example clothing (selected)", "示例服装（已选）"), true);
+        FlickUi::Checkbox(Tr("Preview", "预览"), &preview);
+        FlickUi::SameLine(); FlickUi::Button(Tr("Apply", "应用"));
+        FlickUi::SmallButton("x"); FlickUi::SameLine();
+        FlickUi::Selectable(Tr("Example clothing (selected)", "示例服装（已选）"), true);
     }
     else if (page == 1)
     {
-        ImGui::Button(Tr("New outfit group from working outfit", "从工作搭配新建服装组"));
-        ImGui::Button(Tr("Use outfit group", "使用服装组"));
+        FlickUi::Button(Tr("New outfit group from working outfit", "从工作搭配新建服装组"));
+        FlickUi::Button(Tr("Use outfit group", "使用服装组"));
     }
     else if (page == 2)
     {
-        ImGui::SmallButton("x"); ImGui::SameLine(); ImGui::SmallButton("v");
-        ImGui::SameLine(); ImGui::TextUnformatted(Tr("Working -> backup", "工作 → 后备"));
-        ImGui::SmallButton("x"); ImGui::SameLine(); ImGui::SmallButton("^");
-        ImGui::SameLine(); ImGui::TextUnformatted(Tr("Backup -> working", "后备 → 工作"));
-        ImGui::Button(Tr("Set backup outfit", "设为后备搭配"));
+        FlickUi::SmallButton("x"); FlickUi::SameLine(); FlickUi::SmallButton("v");
+        FlickUi::SameLine(); FlickUi::TextUnformatted(Tr("Working -> backup", "工作 → 后备"));
+        FlickUi::SmallButton("x"); FlickUi::SameLine(); FlickUi::SmallButton("^");
+        FlickUi::SameLine(); FlickUi::TextUnformatted(Tr("Backup -> working", "后备 → 工作"));
+        FlickUi::Button(Tr("Set backup outfit", "设为后备搭配"));
     }
     else if (page == 3)
     {
         bool enabled = true;
-        ImGui::Checkbox(Tr("Allow original clothing", "允许原版服装透出"), &enabled);
-        ImGui::Button(Tr("Configure all slots", "配置全部位置"));
+        FlickUi::Checkbox(Tr("Allow original clothing", "允许原版服装透出"), &enabled);
+        FlickUi::Button(Tr("Configure all slots", "配置全部位置"));
     }
-    else if (page == 4) ImGui::Button(Tr("More", "更多"));
-    else ImGui::Button(Tr("Quick actions", "快捷操作"));
-    ImGui::PopID();
+    else if (page == 4) FlickUi::Button(Tr("More", "更多"));
+    else FlickUi::Button(Tr("Quick actions", "快捷操作"));
+    FlickUi::PopID();
 }
 
 void DrawManual()
 {
     if (!manualOpen) return;
-    const auto* viewport = ImGui::GetMainViewport();
-    const float font = ImGui::GetFontSize();
+    const auto* viewport = FlickUi::GetMainViewport();
+    const float font = FlickUi::GetFontSize();
     const ImVec2 minimum(std::min(font * 23, viewport->WorkSize.x * 0.8f),
         std::min(font * 18, viewport->WorkSize.y * 0.85f));
-    ImGui::SetNextWindowSizeConstraints(minimum, viewport->WorkSize);
-    ImGui::SetNextWindowSize(ImVec2(std::min(font * 29, viewport->WorkSize.x * 0.8f),
+    FlickUi::SetNextWindowSizeConstraints(minimum, viewport->WorkSize);
+    FlickUi::SetNextWindowSize(ImVec2(std::min(font * 29, viewport->WorkSize.x * 0.8f),
         std::min(font * 31, viewport->WorkSize.y * 0.85f)), ImGuiCond_Appearing);
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + std::max(0.0f, viewport->WorkSize.x - font * 30),
+    FlickUi::SetNextWindowPos(ImVec2(viewport->WorkPos.x + std::max(0.0f, viewport->WorkSize.x - font * 30),
         viewport->WorkPos.y + font * 3), ImGuiCond_Appearing);
-    if (!ImGui::Begin(Tr("Operation manual###SkyWardrobeManual", "操作手册###SkyWardrobeManual"), &manualOpen,
+    if (!FlickUi::Begin(Tr("Operation manual###SkyWardrobeManual", "操作手册###SkyWardrobeManual"), &manualOpen,
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse))
     {
-        ImGui::End(); return;
+        FlickUi::End(); return;
     }
-    const auto windowMin = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+    const auto windowMin = FlickUi::GetWindowPos(), size = FlickUi::GetWindowSize();
     const ImVec2 windowMax(windowMin.x + size.x, windowMin.y + size.y);
     const int count = static_cast<int>(manualLessons.size());
     const int displayedPage = manualPage;
-    const float footer = ImGui::GetFrameHeightWithSpacing() * 4;
-    if (ImGui::BeginChild("Manual content", ImVec2(0, -footer)))
+    const float footer = FlickUi::GetFrameHeightWithSpacing() * 4;
+    if (FlickUi::BeginChild("Manual content", ImVec2(0, -footer)))
     {
         static int lastPage = -2;
-        if (lastPage != manualPage) { ImGui::SetScrollY(0); lastPage = manualPage; }
+        if (lastPage != manualPage) { FlickUi::SetScrollY(0); lastPage = manualPage; }
         if (manualPage < 0)
         {
-            ImGui::SeparatorText(Tr("Contents", "操作手册目录"));
-            ImGui::TextWrapped("%s", Tr("Start with the basics, or select a topic. Arrows point to a visible control or the tab that leads to it.",
+            FlickUi::SeparatorText(Tr("Contents", "操作手册目录"));
+            FlickUi::TextWrapped("%s", Tr("Start with the basics, or select a topic. Arrows point to a visible control or the tab that leads to it.",
                 "可以从基本操作开始，也可以直接选择主题。箭头会指向可见控件，或能进入该功能的标签页。"));
             for (int i = 0; i < count; ++i)
             {
-                if (i == 0 || i == 5 || i == 8) ImGui::SeparatorText(i == 0 ? Tr("Basics and concepts", "基本操作与核心概念")
+                if (i == 0 || i == 5 || i == 8) FlickUi::SeparatorText(i == 0 ? Tr("Basics and concepts", "基本操作与核心概念")
                     : i == 5 ? Tr("Organizing clothing", "服装查找与整理") : Tr("Advanced features", "进阶功能与设置"));
-                if (ImGui::Selectable((std::to_string(i + 1) + ". " + manualLessons[i].title).c_str())) manualPage = i;
+                if (FlickUi::Selectable((std::to_string(i + 1) + ". " + manualLessons[i].title).c_str())) manualPage = i;
             }
         }
         else
         {
             const auto& lesson = manualLessons[manualPage];
-            ImGui::TextDisabled("%d / %d", manualPage + 1, count);
-            ImGui::SeparatorText(lesson.title);
-            ImGui::TextWrapped("%s", lesson.text);
+            FlickUi::TextDisabled("%d / %d", manualPage + 1, count);
+            FlickUi::SeparatorText(lesson.title);
+            FlickUi::TextWrapped("%s", lesson.text);
             DrawManualExamples(manualPage);
-            ImGui::SeparatorText(Tr("Find the real control", "实际操作位置"));
-            ImGui::TextWrapped("%s", lesson.hint);
-            ImGui::TextWrapped("%s", Tr("If the control is hidden, follow the tab arrow first, then expand or scroll the indicated area. Drag this window aside if it covers the target.",
+            FlickUi::SeparatorText(Tr("Find the real control", "实际操作位置"));
+            FlickUi::TextWrapped("%s", lesson.hint);
+            FlickUi::TextWrapped("%s", Tr("If the control is hidden, follow the tab arrow first, then expand or scroll the indicated area. Drag this window aside if it covers the target.",
                 "控件未显示时，先按箭头切换标签，再展开或滚动对应区域。如果手册遮住目标，可拖动本窗口让开。"));
         }
     }
-    ImGui::EndChild();
-    ImGui::Separator();
-    const auto centered = [](float width) { ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - width) * 0.5f)); };
+    FlickUi::EndChild();
+    FlickUi::Separator();
+    const auto centered = [](float width) { FlickUi::SetCursorPosX(FlickUi::GetCursorPosX() + std::max(0.0f, (FlickUi::GetContentRegionAvail().x - width) * 0.5f)); };
     centered(font * 18);
-    ImGui::BeginDisabled(manualPage < 0);
-    if (ImGui::Button(Tr("Previous", "上一页"), ImVec2(font * 6, 0))) --manualPage;
-    ImGui::EndDisabled(); ImGui::SameLine();
-    if (ImGui::Button(Tr("Contents", "目录"), ImVec2(font * 5, 0))) manualPage = -1;
-    ImGui::SameLine(); ImGui::BeginDisabled(manualPage >= count - 1);
-    if (ImGui::Button(Tr("Next", "下一页"), ImVec2(font * 6, 0))) ++manualPage;
-    ImGui::EndDisabled();
+    FlickUi::BeginDisabled(manualPage < 0);
+    if (FlickUi::Button(Tr("Previous", "上一页"), ImVec2(font * 6, 0))) --manualPage;
+    FlickUi::EndDisabled(); FlickUi::SameLine();
+    if (FlickUi::Button(Tr("Contents", "目录"), ImVec2(font * 5, 0))) manualPage = -1;
+    FlickUi::SameLine(); FlickUi::BeginDisabled(manualPage >= count - 1);
+    if (FlickUi::Button(Tr("Next", "下一页"), ImVec2(font * 6, 0))) ++manualPage;
+    FlickUi::EndDisabled();
     const std::string previous = manualPage > 0 ? std::string(Tr("Previous topic: ", "上一项：")) + manualLessons[manualPage - 1].title : Tr("Previous topic: Contents", "上一项：目录");
     const std::string next = manualPage + 1 < count ? std::string(Tr("Next topic: ", "下一项：")) + manualLessons[manualPage + 1].title : Tr("Last topic", "已是最后一项");
-    centered(ImGui::CalcTextSize(previous.c_str()).x); ImGui::TextDisabled("%s", previous.c_str());
-    centered(ImGui::CalcTextSize(next.c_str()).x); ImGui::TextDisabled("%s", next.c_str());
-    ImGui::End();
-    if (!manualOpen || manualPage < 0 || displayedPage != manualPage || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
+    centered(FlickUi::CalcTextSize(previous.c_str()).x); FlickUi::TextDisabled("%s", previous.c_str());
+    centered(FlickUi::CalcTextSize(next.c_str()).x); FlickUi::TextDisabled("%s", next.c_str());
+    FlickUi::End();
+    if (!manualOpen || manualPage < 0 || displayedPage != manualPage || FlickUi::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
 
     const auto& lesson = manualLessons[manualPage];
     auto anchor = manualAnchors[static_cast<std::size_t>(lesson.target)];
@@ -211,8 +211,8 @@ void DrawManual()
     const float length = std::sqrt(dx * dx + dy * dy);
     if (length < 1) return;
     const float ux = dx / length, uy = dy / length, head = font * 0.65f;
-    const auto color = ImGui::GetColorU32(ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
-    auto* draw = ImGui::GetForegroundDrawList();
+    const auto color = FlickUi::GetColorU32(ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
+    auto* draw = FlickUi::GetForegroundDrawList();
     draw->AddRect(anchor.min, anchor.max, color, 4, 0, 2);
     draw->AddLine(start, end, color, 2.5f);
     draw->AddTriangleFilled(end, ImVec2(end.x - ux * head - uy * head * 0.5f, end.y - uy * head + ux * head * 0.5f),

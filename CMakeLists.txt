@@ -30,13 +30,14 @@ add_commonlibsse_plugin(${PROJECT_NAME}
     SOURCES
         src/Plugin.cpp
         src/ui/Overlay.cpp
-        src/ui/InputMethod.cpp
-        src/ui/ime/Win32Ime.cpp
+        src/ui/FlickUi.cpp
+        src/ui/FlickFonts.cpp
         src/ui/UiTabs.cpp
         src/wardrobe/Store.cpp
         src/wardrobe/PinyinSearch.cpp
         src/wardrobe/ActorRuntime.cpp
         src/wardrobe/Service.cpp
+        src/wardrobe/RuntimeTick.cpp
         src/wardrobe/SosBackend.cpp
         src/wardrobe/SafeMode.cpp
         src/wardrobe/ActualEquipment.cpp
@@ -46,10 +47,10 @@ add_commonlibsse_plugin(${PROJECT_NAME}
     USE_ADDRESS_LIBRARY
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party")
+target_include_directories(${PROJECT_NAME} BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/flick/imgui" "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party")
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
-target_compile_definitions(${PROJECT_NAME} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(${PROJECT_NAME} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX IMGUI_USE_WCHAR32)
 set(CAF_UI_LANGUAGE "en" CACHE STRING "CAF UI language: en or zh-CN")
 set_property(CACHE CAF_UI_LANGUAGE PROPERTY STRINGS "en" "zh-CN")
 if(CAF_UI_LANGUAGE STREQUAL "zh-CN")
@@ -70,9 +71,7 @@ endif()
 # 交给 cl.exe 并行编译插件源文件。
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/MP>)
 target_precompile_headers(${PROJECT_NAME} PRIVATE src/PCH.h)
-# 可迁移模块独立编译，避免意外依赖 Skyrim 预编译头。
-set_source_files_properties(src/ui/ime/Win32Ime.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-target_link_libraries(${PROJECT_NAME} PRIVATE imgui::imgui minhook::minhook cpp-pinyin::cpp-pinyin d3d11 dxgi imm32)
+target_link_libraries(${PROJECT_NAME} PRIVATE minhook::minhook cpp-pinyin::cpp-pinyin dxgi)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Data/SKSE/Plugins"
@@ -128,6 +127,22 @@ endif()
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION "${DEPLOY_ROOT}/SKSE/Plugins")
 install(FILES "$<TARGET_PDB_FILE:${PROJECT_NAME}>" DESTINATION "${DEPLOY_ROOT}/SKSE/Plugins" OPTIONAL)
 install(FILES ${CAF_ASSET_FILES} DESTINATION "${DEPLOY_ROOT}/SKSE/Plugins/${CAF_ASSET_DIR}")
+
+# FLICK 不搜索 SkyWardrobe/Fonts，必须同时提供框架标准字体资源目录。
+set(FLICK_FONT_DIR "FUCKs/FUCK/fonts")
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/Data/${FLICK_FONT_DIR}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${CAF_ASSET_FILES} "${CMAKE_BINARY_DIR}/Data/${FLICK_FONT_DIR}/"
+    VERBATIM
+)
+if(AUTO_DEPLOY)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${DEPLOY_ROOT}/${FLICK_FONT_DIR}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${CAF_ASSET_FILES} "${DEPLOY_ROOT}/${FLICK_FONT_DIR}/"
+        VERBATIM
+    )
+endif()
+install(FILES ${CAF_ASSET_FILES} DESTINATION "${DEPLOY_ROOT}/${FLICK_FONT_DIR}")
 add_custom_target(deploy
     COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}" --config Release
     DEPENDS ${PROJECT_NAME}
@@ -158,6 +173,22 @@ install(FILES ${WARDROBE_EXAMPLES} DESTINATION "${DEPLOY_ROOT}/SKSE/Plugins/SkyW
 
 
 enable_testing()
+add_executable(SkyWardrobeFlickFontsTests tests/FlickFontsTests.cpp src/ui/FlickFonts.cpp)
+target_include_directories(SkyWardrobeFlickFontsTests PRIVATE src)
+target_link_libraries(SkyWardrobeFlickFontsTests PRIVATE CommonLibSSE::CommonLibSSE)
+target_compile_features(SkyWardrobeFlickFontsTests PRIVATE cxx_std_23)
+target_compile_definitions(SkyWardrobeFlickFontsTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(SkyWardrobeFlickFontsTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME SkyWardrobeFlickFontsTests COMMAND SkyWardrobeFlickFontsTests)
+
+add_executable(SkyWardrobeFlickUiTests tests/FlickUiTests.cpp src/ui/FlickUi.cpp)
+target_include_directories(SkyWardrobeFlickUiTests BEFORE PRIVATE src/third_party/flick/imgui src src/third_party)
+target_link_libraries(SkyWardrobeFlickUiTests PRIVATE CommonLibSSE::CommonLibSSE)
+target_compile_features(SkyWardrobeFlickUiTests PRIVATE cxx_std_23)
+target_compile_definitions(SkyWardrobeFlickUiTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN IMGUI_USE_WCHAR32)
+target_compile_options(SkyWardrobeFlickUiTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME SkyWardrobeFlickUiTests COMMAND SkyWardrobeFlickUiTests)
+
 add_executable(SkyWardrobeMultiLayerTests tests/MultiLayerTests.cpp)
 target_include_directories(SkyWardrobeMultiLayerTests PRIVATE src src/third_party)
 target_link_libraries(SkyWardrobeMultiLayerTests PRIVATE imgui::imgui)

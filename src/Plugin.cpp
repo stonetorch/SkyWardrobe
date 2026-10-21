@@ -9,8 +9,9 @@
 #include <utility>
 
 #include "ui/Overlay.h"
-#include "ui/InputMethod.h"
+#include "ui/FlickFonts.h"
 #include "wardrobe/Service.h"
+#include "wardrobe/RuntimeTick.h"
 #include "wardrobe/ActualEquipment.h"
 #include "wardrobe/SosBackend.h"
 #include "wardrobe/SafeMode.h"
@@ -56,6 +57,7 @@ namespace
         Wardrobe::SosBackend::Get().DetectInstallation();
         Overlay::Install();
         Wardrobe::Service::Get().Initialize();
+        Wardrobe::InstallRuntimeTick();
         Wardrobe::InstallConsole();
         SKSE::log::info("Game data loaded");
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
@@ -81,6 +83,8 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
         spdlog::default_logger()->flush();
     }
 
+    // 在首个渲染帧和 FLICK 字体图集创建之前准备资源，避免运行时修改宿主图集。
+    FlickFonts::PrepareForGame();
     Wardrobe::SafeMode::Get().Initialize();
     InstallExitDetection();
     if (Wardrobe::SafeMode::Get().Active()) SKSE::log::warn("Safe mode: {}", Wardrobe::SafeMode::Get().Reason());
@@ -91,7 +95,6 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
         Wardrobe::OnGameMessage(message->type);
         if (message->type == SKSE::MessagingInterface::kPreLoadGame || message->type == SKSE::MessagingInterface::kNewGame)
         {
-            Overlay::InputMethod::SetOverlayState(false, true);
             Overlay::CloseAllMenus();
         }
         if (message->type == SKSE::MessagingInterface::kDataLoaded) {

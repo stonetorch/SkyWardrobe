@@ -5,7 +5,7 @@
 #include "ui/IconsFontAwesome6.h"
 #include "ui/UiTabs.h"
 #include "ui/WindowPlacement.h"
-#include <imgui_stdlib.h>
+#include "ui/FlickUi.h"
 #include <algorithm>
 #include <array>
 
@@ -19,7 +19,7 @@ namespace Wardrobe
             const char* glyph;
             const char* name;
         };
-        // 仅使用随项目分发的 Font Awesome Free Solid 字体，避免在线资源依赖。
+        // 图标使用 FLICK 已合并的 Font Awesome 字体，不修改宿主字体图集。
         const Icon icons[] = {
             {"folder", ICON_FA_FOLDER, Tr("Folder", "文件夹")},
             {"shirt", ICON_FA_SHIRT, Tr("Shirt", "上装")},
@@ -139,40 +139,40 @@ namespace Wardrobe
         void DrawEditor()
         {
             const auto title = Tr("Shortcut editor", "编辑快捷格子");
-            if (openEditor) { ImGui::OpenPopup(title); openEditor = false; }
-            const auto* viewport = ImGui::GetMainViewport();
-            const float scale = ImGui::GetFontSize() / 20.0f;
+            if (openEditor) { FlickUi::OpenPopup(title); openEditor = false; }
+            const auto* viewport = FlickUi::GetMainViewport();
+            const float scale = FlickUi::GetFontSize() / 20.0f;
             const ImVec2 editorSize(570 * scale, 650 * scale);
             const auto center = viewport->GetCenter();
             CAF::Ui::SetNextWindowNearPoint(ImVec2(center.x - editorSize.x / 2 - 16,
                 center.y - editorSize.y / 2 - 16), editorSize);
-            if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
-            ImGui::Text("%s %d", Tr("Cell", "格子"), editingCell + 1);
-            ImGui::BeginDisabled(!Service::Get().store.writable);
+            if (!FlickUi::BeginPopupModal(title, nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
+            FlickUi::Text("%s %d", Tr("Cell", "格子"), editingCell + 1);
+            FlickUi::BeginDisabled(!Service::Get().store.writable);
             auto label = draft.value("label", "");
-            ImGui::TextUnformatted(Tr("Label (optional, shown on hover)", "名称（可选，悬停显示）"));
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputText("##label", &label)) draft["label"] = label;
+            FlickUi::TextUnformatted(Tr("Label (optional, shown on hover)", "名称（可选，悬停显示）"));
+            FlickUi::SetNextItemWidth(-1);
+            if (FlickUi::InputText("##label", &label)) draft["label"] = label;
             int action = ActionIndex(draft.value("action", "none"));
             if (!Service::Get().MultiplePresets() && (action == 3 || action == 4))
             { action = 0; draft["action"] = "none"; draft["target"] = ""; }
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::BeginCombo(Tr("Action", "操作"), actionNames[action]))
+            FlickUi::SetNextItemWidth(-1);
+            if (FlickUi::BeginCombo(Tr("Action", "操作"), actionNames[action]))
             {
                 for (int i = 0; i < static_cast<int>(std::size(actions)); ++i)
                 {
                     if (!Service::Get().MultiplePresets() && (i == 3 || i == 4)) continue;
-                    if (ImGui::Selectable(actionNames[i], action == i))
+                    if (FlickUi::Selectable(actionNames[i], action == i))
                     { action = i; draft["action"] = actions[i]; draft["target"] = ""; targetSearch.clear(); }
                 }
-                ImGui::EndCombo();
+                FlickUi::EndCombo();
             }
             if (action != 0)
             {
-                ImGui::TextWrapped("%s: %s", Tr("Target", "目标"), CellName(Json{{"action", actions[action]}, {"target", draft["target"]}}).c_str());
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputTextWithHint("##target search", Tr("Search name / ID / pinyin", "搜索名称 / ID / 拼音"), &targetSearch);
-                ImGui::BeginChild("Targets", ImVec2(0, 145 * scale), ImGuiChildFlags_Borders);
+                FlickUi::TextWrapped("%s: %s", Tr("Target", "目标"), CellName(Json{{"action", actions[action]}, {"target", draft["target"]}}).c_str());
+                FlickUi::SetNextItemWidth(-1);
+                FlickUi::InputTextWithHint("##target search", Tr("Search name / ID / pinyin", "搜索名称 / ID / 拼音"), &targetSearch);
+                FlickUi::BeginChild("Targets", ImVec2(0, 145 * scale), ImGuiChildFlags_Borders);
                 const auto& database = Service::Get().store.database;
                 for (const char* collection : {"categories", "groups", "pluginCategories", "presets"})
                 {
@@ -186,83 +186,83 @@ namespace Wardrobe
                         if (!targetSearch.empty() && !SearchScore(targetSearch, id) && !SearchMetadata(targetSearch, metadata) &&
                             !SearchScore(targetSearch, ObjectName(id, metadata), true)) continue;
                         const auto target = std::string_view(collection) == "presets" ? id : std::string(collection) + ":" + id;
-                        ImGui::PushID(target.c_str());
+                        FlickUi::PushID(target.c_str());
                         const auto name = ObjectName(id, metadata);
-                        if (ImGui::Selectable((name + "##target").c_str(), draft["target"] == target)) draft["target"] = target;
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", target.c_str());
-                        ImGui::PopID();
+                        if (FlickUi::Selectable((name + "##target").c_str(), draft["target"] == target)) draft["target"] = target;
+                        if (FlickUi::IsItemHovered()) FlickUi::SetTooltip("%s", target.c_str());
+                        FlickUi::PopID();
                     }
                 }
-                ImGui::EndChild();
-                if (!Target(draft)) ImGui::TextColored(ImVec4(1, .5f, .3f, 1), "%s", Tr("Select an available target.", "请选择有效目标。"));
+                FlickUi::EndChild();
+                if (!Target(draft)) FlickUi::TextColored(ImVec4(1, .5f, .3f, 1), "%s", Tr("Select an available target.", "请选择有效目标。"));
                 if (action == 5 || action == 4)
-                    ImGui::TextWrapped("%s", Tr("Uses the existing outfit selection: randomly picks items without slot conflicts and applies immediately.",
+                    FlickUi::TextWrapped("%s", Tr("Uses the existing outfit selection: randomly picks items without slot conflicts and applies immediately.",
                         "沿用现有服装组选衣逻辑：随机选取槽位不冲突的服装，并立即应用。"));
             }
-            ImGui::SeparatorText(Tr("Icon library", "图标库"));
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputTextWithHint("##icon search", Tr("Search icons", "搜索图标"), &iconSearch);
-            ImGui::BeginChild("Icons", ImVec2(0, 130 * scale), ImGuiChildFlags_Borders);
+            FlickUi::SeparatorText(Tr("Icon library", "图标库"));
+            FlickUi::SetNextItemWidth(-1);
+            FlickUi::InputTextWithHint("##icon search", Tr("Search icons", "搜索图标"), &iconSearch);
+            FlickUi::BeginChild("Icons", ImVec2(0, 130 * scale), ImGuiChildFlags_Borders);
             int visible = 0;
             const float side = 42 * scale;
-            const int count = std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + ImGui::GetStyle().ItemSpacing.x) /
-                (side + ImGui::GetStyle().ItemSpacing.x)));
+            const int count = std::max(1, static_cast<int>((FlickUi::GetContentRegionAvail().x + FlickUi::GetStyle().ItemSpacing.x) /
+                (side + FlickUi::GetStyle().ItemSpacing.x)));
             for (const auto& icon : icons)
             {
                 if (!iconSearch.empty() && !SearchScore(iconSearch, icon.name) && !SearchScore(iconSearch, icon.id)) continue;
-                if (visible++ % count) ImGui::SameLine();
-                ImGui::PushID(icon.id);
+                if (visible++ % count) FlickUi::SameLine();
+                FlickUi::PushID(icon.id);
                 const bool selected = draft["icon"] == icon.id;
-                if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-                if (ImGui::Button(CAF::Ui::IconFontAvailable() ? icon.glyph : icon.name, ImVec2(side, side))) draft["icon"] = icon.id;
-                if (selected) ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s (%s)", icon.name, icon.id);
-                ImGui::PopID();
+                if (selected) FlickUi::PushStyleColor(ImGuiCol_Button, FlickUi::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                if (FlickUi::Button(CAF::Ui::IconFontAvailable() ? icon.glyph : icon.name, ImVec2(side, side))) draft["icon"] = icon.id;
+                if (selected) FlickUi::PopStyleColor();
+                if (FlickUi::IsItemHovered()) FlickUi::SetTooltip("%s (%s)", icon.name, icon.id);
+                FlickUi::PopID();
             }
-            ImGui::EndChild();
-            ImGui::BeginDisabled(action != 0 && !Target(draft));
-            if (ImGui::Button(Tr("Save", "保存")))
+            FlickUi::EndChild();
+            FlickUi::BeginDisabled(action != 0 && !Target(draft));
+            if (FlickUi::Button(Tr("Save", "保存")))
             {
                 auto& cells = Options()["cells"];
                 while (cells.size() <= static_cast<std::size_t>(editingCell)) cells.push_back(Json::object());
-                cells[editingCell] = draft; Service::Get().Save(); ImGui::CloseCurrentPopup();
+                cells[editingCell] = draft; Service::Get().Save(); FlickUi::CloseCurrentPopup();
             }
-            ImGui::EndDisabled(); ImGui::SameLine();
-            if (ImGui::Button(Tr("Clear cell", "清空格子")))
+            FlickUi::EndDisabled(); FlickUi::SameLine();
+            if (FlickUi::Button(Tr("Clear cell", "清空格子")))
             {
                 auto& cells = Options()["cells"];
                 if (editingCell < static_cast<int>(cells.size())) cells[editingCell] = Json::object();
-                Service::Get().Save(); ImGui::CloseCurrentPopup();
+                Service::Get().Save(); FlickUi::CloseCurrentPopup();
             }
-            ImGui::EndDisabled(); ImGui::SameLine();
-            if (ImGui::Button(Tr("Cancel", "取消"))) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
+            FlickUi::EndDisabled(); FlickUi::SameLine();
+            if (FlickUi::Button(Tr("Cancel", "取消"))) FlickUi::CloseCurrentPopup();
+            FlickUi::EndPopup();
         }
     }
 
     void DrawQuickAccessSettings()
     {
         auto& options = Options();
-        ImGui::SeparatorText(Tr("Shortcut window", "快捷浮窗"));
-        ImGui::BeginDisabled(!Service::Get().store.writable);
+        FlickUi::SeparatorText(Tr("Shortcut window", "快捷浮窗"));
+        FlickUi::BeginDisabled(!Service::Get().store.writable);
         bool enabled = options["enabled"], attached = options["attached"];
-        bool changed = ImGui::Checkbox(Tr("Show shortcut window", "显示快捷浮窗"), &enabled);
-        changed |= ImGui::Checkbox(Tr("Follow main panel", "跟随主面板"), &attached);
+        bool changed = FlickUi::Checkbox(Tr("Show shortcut window", "显示快捷浮窗"), &enabled);
+        changed |= FlickUi::Checkbox(Tr("Follow main panel", "跟随主面板"), &attached);
         int rows = options["rows"], columns = options["columns"];
         float cellSize = options["cellSize"];
-        ImGui::SetNextItemWidth(180);
-        if (ImGui::SliderInt(Tr("Rows", "行数"), &rows, 1, 12, "%d", ImGuiSliderFlags_AlwaysClamp)) options["rows"] = rows;
-        changed |= ImGui::IsItemDeactivatedAfterEdit();
-        ImGui::SetNextItemWidth(180);
-        if (ImGui::SliderInt(Tr("Columns", "列数"), &columns, 1, 12, "%d", ImGuiSliderFlags_AlwaysClamp)) options["columns"] = columns;
-        changed |= ImGui::IsItemDeactivatedAfterEdit();
-        ImGui::SetNextItemWidth(180);
-        if (ImGui::SliderFloat(Tr("Square size", "方格大小"), &cellSize, 32, 128, "%.0f", ImGuiSliderFlags_AlwaysClamp)) options["cellSize"] = cellSize;
-        changed |= ImGui::IsItemDeactivatedAfterEdit();
+        FlickUi::SetNextItemWidth(180);
+        if (FlickUi::SliderInt(Tr("Rows", "行数"), &rows, 1, 12, "%d", ImGuiSliderFlags_AlwaysClamp)) options["rows"] = rows;
+        changed |= FlickUi::IsItemDeactivatedAfterEdit();
+        FlickUi::SetNextItemWidth(180);
+        if (FlickUi::SliderInt(Tr("Columns", "列数"), &columns, 1, 12, "%d", ImGuiSliderFlags_AlwaysClamp)) options["columns"] = columns;
+        changed |= FlickUi::IsItemDeactivatedAfterEdit();
+        FlickUi::SetNextItemWidth(180);
+        if (FlickUi::SliderFloat(Tr("Square size", "方格大小"), &cellSize, 32, 128, "%.0f", ImGuiSliderFlags_AlwaysClamp)) options["cellSize"] = cellSize;
+        changed |= FlickUi::IsItemDeactivatedAfterEdit();
         options["enabled"] = enabled; options["attached"] = attached;
         if (changed) Service::Get().Save();
-        ImGui::EndDisabled();
-        ImGui::TextWrapped("%s", Tr("Click an empty cell or right-click any cell to configure it. Shrinking the grid retains hidden bindings; expanding restores them in order. Square size follows UI scale.",
+        FlickUi::EndDisabled();
+        FlickUi::TextWrapped("%s", Tr("Click an empty cell or right-click any cell to configure it. Shrinking the grid retains hidden bindings; expanding restores them in order. Square size follows UI scale.",
             "点击空格子或右键任意格子可配置。缩小网格会保留隐藏绑定，扩大后按原顺序恢复。方格大小随界面缩放。"));
     }
 
@@ -272,10 +272,10 @@ namespace Wardrobe
         auto& options = Options();
         if (options["enabled"].get<bool>())
         {
-            const auto* viewport = ImGui::GetMainViewport();
-            const auto& style = ImGui::GetStyle();
+            const auto* viewport = FlickUi::GetMainViewport();
+            const auto& style = FlickUi::GetStyle();
             const int rows = options["rows"], columns = options["columns"];
-            const float scale = ImGui::GetFontSize() / 20.0f;
+            const float scale = FlickUi::GetFontSize() / 20.0f;
             const auto layout = CalculateQuickAccessLayout(rows, columns, options["cellSize"].get<float>(),
                 scale, viewport->WorkSize, style.ScrollbarSize);
             const auto [side, gap, padding, content, size] = layout;
@@ -288,31 +288,31 @@ namespace Wardrobe
             position.x = std::clamp(position.x, viewport->WorkPos.x, viewport->WorkPos.x + std::max(0.0f, viewport->WorkSize.x - size.x));
             position.y = std::clamp(position.y, viewport->WorkPos.y, viewport->WorkPos.y + std::max(0.0f, viewport->WorkSize.y - size.y));
             // 自由拖动模式只在出现时恢复位置，逐帧强制定位会抵消 ImGui 的鼠标拖动。
-            ImGui::SetNextWindowPos(position, attached ? ImGuiCond_Always : ImGuiCond_Appearing);
-            ImGui::SetNextWindowSize(size);
-            ImGui::SetNextWindowContentSize(content);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f * scale);
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * scale);
-            ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
+            FlickUi::SetNextWindowPos(position, attached ? ImGuiCond_Always : ImGuiCond_Appearing);
+            FlickUi::SetNextWindowSize(size);
+            FlickUi::SetNextWindowContentSize(content);
+            FlickUi::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
+            FlickUi::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
+            FlickUi::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f * scale);
+            FlickUi::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * scale);
+            FlickUi::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
             const auto flags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_HorizontalScrollbar | (attached ? ImGuiWindowFlags_NoMove : 0);
-            if (ImGui::Begin(Tr("Shortcuts###WardrobeShortcuts", "快捷选项###WardrobeShortcuts"), nullptr, flags))
+            if (FlickUi::Begin(Tr("Shortcuts###WardrobeShortcuts", "快捷选项###WardrobeShortcuts"), nullptr, flags))
             {
-                detachedPosition = ImGui::GetWindowPos();
+                detachedPosition = FlickUi::GetWindowPos();
                 detachedPosition.x = std::clamp(detachedPosition.x, viewport->WorkPos.x,
                     viewport->WorkPos.x + std::max(0.0f, viewport->WorkSize.x - size.x));
                 detachedPosition.y = std::clamp(detachedPosition.y, viewport->WorkPos.y,
                     viewport->WorkPos.y + std::max(0.0f, viewport->WorkSize.y - size.y));
-                ImGui::SetWindowPos(detachedPosition); hasDetachedPosition = true;
+                FlickUi::SetWindowPos(detachedPosition); hasDetachedPosition = true;
                 // 复制格子快照，配置或服务保存不会使本帧遍历中的 JSON 引用失效。
                 const auto cells = options["cells"];
-                const auto origin = ImGui::GetCursorPos();
+                const auto origin = FlickUi::GetCursorPos();
                 for (int row = 0; row < rows; ++row)
                     for (int column = 0; column < columns; ++column)
                     {
-                        ImGui::SetCursorPos(ImVec2(origin.x + column * (side + gap), origin.y + row * (side + gap)));
+                        FlickUi::SetCursorPos(ImVec2(origin.x + column * (side + gap), origin.y + row * (side + gap)));
                         const int index = row * columns + column;
                         const auto cell = index < static_cast<int>(cells.size()) ? cells[index] : Json::object();
                         const auto action = cell.value("action", "none");
@@ -321,29 +321,29 @@ namespace Wardrobe
                         const bool empty = action == "none", valid = Target(cell) != nullptr;
                         const auto name = CellName(cell);
                         const auto& icon = FindIcon(cell.value("icon", "folder"));
-                        ImGui::PushID(index);
-                        if (!empty && !valid) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, .5f, .3f, 1));
+                        FlickUi::PushID(index);
+                        if (!empty && !valid) FlickUi::PushStyleColor(ImGuiCol_Text, ImVec4(1, .5f, .3f, 1));
                         const auto text = empty ? "+" : CAF::Ui::IconFontAvailable() ? icon.glyph : icon.name;
-                        if (ImGui::Button((std::string(text) + "##cell").c_str(), ImVec2(side, side)))
+                        if (FlickUi::Button((std::string(text) + "##cell").c_str(), ImVec2(side, side)))
                         {
                             if (empty) StartEditor(index);
                             else if (valid) request = {action, cell.value("target", "")};
                             else Service::Get().status = Tr("Shortcut target is missing. Right-click to rebind.", "快捷目标已失效，请右键重新绑定。");
                         }
-                        if (!empty && !valid) ImGui::PopStyleColor();
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\n%s", name.c_str(), actionNames[ActionIndex(action)],
+                        if (!empty && !valid) FlickUi::PopStyleColor();
+                        if (FlickUi::IsItemHovered()) FlickUi::SetTooltip("%s\n%s\n%s", name.c_str(), actionNames[ActionIndex(action)],
                             !empty && !valid ? Tr("Missing target - right-click to edit", "目标失效，右键编辑") : Tr("Right-click to edit", "右键编辑"));
-                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) StartEditor(index);
-                        ImGui::PopID();
+                        if (FlickUi::IsItemClicked(ImGuiMouseButton_Right)) StartEditor(index);
+                        FlickUi::PopID();
                     }
                 // 右键留白打开整体配置，格子右键仍直接编辑该格；取消跟随后可拖动留白。
-                if (ImGui::BeginPopupContextWindow("Grid settings", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+                if (FlickUi::BeginPopupContextWindow("Grid settings", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
                 {
-                    DrawQuickAccessSettings(); ImGui::EndPopup();
+                    DrawQuickAccessSettings(); FlickUi::EndPopup();
                 }
             }
-            ImGui::End();
-            ImGui::PopStyleVar(5);
+            FlickUi::End();
+            FlickUi::PopStyleVar(5);
         }
         DrawEditor();
         return request;

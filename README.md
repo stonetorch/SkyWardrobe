@@ -4,7 +4,7 @@ Skyrim SE / AE 的独立 SKSE 衣柜管理器。扫描已加载的 ARMO 资源�
 
 ## 使用
 
-运行依赖：匹配游戏版本的 SKSE、Address Library，以及 [Skyrim Outfit System SE Revived](https://github.com/lispcoc/SkyrimOutfitSystemSE)。SOS 未安装或原生 DLL 未加载时，SkyWardrobe 全部功能禁用，面板只显示依赖缺失提示，不会尝试 VM 调用。安装兼容版本后需要重启游戏。SOS 需在自己的 MCM 中启用。
+运行依赖：匹配游戏版本的 SKSE、Address Library、[FLICK（API 7 或更新）](https://www.nexusmods.com/skyrimspecialedition/mods/181603)，以及 [Skyrim Outfit System SE Revived](https://github.com/lispcoc/SkyrimOutfitSystemSE)。SOS 未安装或原生 DLL 未加载时，SkyWardrobe 全部功能禁用，面板只显示依赖缺失提示，不会尝试 VM 调用。安装兼容版本后需要重启游戏。SOS 需在自己的 MCM 中启用。
 
 控制台命令无需 ESP、Papyrus 编译产物或 ConsoleUtil：
 
@@ -18,7 +18,7 @@ wardrobe clear
 wardrobe close
 ```
 
-`preset` 支持预设 ID 或完整名称。`wardrobe` 打开后自动关闭控制台。关闭按钮和 Esc 恢复游戏视角输入；外部输入法编辑期间，Esc 先由输入法取消组词或退出文本编辑，再按 Esc 关闭衣柜。界面设置可以启用 / 禁用快捷键并重新绑定；默认禁用，预选 F11。窗口可拖动与调整大小，布局保存在 `SkyWardrobe/ImGui.ini`；UI 缩放与鼠标灵敏度分别设置。
+`preset` 支持预设 ID 或完整名称。`wardrobe` 打开后自动关闭控制台。关闭按钮和 Esc 恢复游戏视角输入；外部输入法编辑期间，Esc 先由输入法取消组词或退出文本编辑，再按 Esc 关闭衣柜。界面设置可以启用 / 禁用快捷键并重新绑定；默认禁用，预选 F11。窗口由 FLICK 管理，支持拖动与调整大小，布局保存在框架的工作区配置中。也可从 FLICK 侧栏选择 SkyWardrobe，再点击“打开衣柜”。衣柜缩放设置继续有效；鼠标移动由 FLICK 管理，当前公开 API 没有独立窗口的灵敏度接口，旧 `cursor_sensitivity` 值保留但不生效。
 
 ## 衣柜功能
 
@@ -53,17 +53,13 @@ wardrobe close
 
 手动编辑暂缓该角色自动换装，下一次条件切换恢复，或点击“恢复自动”。关闭衣柜保留手动外观。启用自动换装时记录并关闭该角色 SOS 地点自动切换；关闭自动或移除管理时恢复原值。未加载角色的清理和恢复会延迟执行。旧预设迁移到玩家的默认条件，自动初始关闭。详细实现与验证见 [操作改进报告](docs/reports/6_life-improvement-report.md)。
 
-## IME 集成
+## FLICK 与中文输入
 
-界面设置提供 **IMM shared [1]**、**IMM private [2]**、**外部模组桥接 [3]**、自动选择与禁用模式，并带有两组快速测试输入框。原生 IMM 不依赖输入法修复模组，按 Unicode 接入各语言；共享模式复用窗口上下文，独立模式在编辑期间创建自有上下文。每条路径可持久禁用。设置、兼容性边界和独立模块迁移方法见 [通用 IME 集成](docs/PortableIme.md)。
+所有搜索、别名、备注及编辑器输入栏使用 FLICK 标准 `InputText` / `InputTextMultiline`，由框架统一处理文本焦点及字符事件。SkyWardrobe 不再安装自己的 IME、WndProc 或输入事件拦截器；原生 IMM 和旧外部输入法桥接实现退出插件构建，旧 INI 项保留兼容。
 
-自动接入 **SimpleIME**、**Skyrim Input Method - Use System's IME**、**Input Method Unlocked**，无需为衣柜安装额外桥接 DLL。三种接入均已编译实现；IMU 在 Skyrim 1.5.97 / IMU 2.1.0 环境修正后得到用户成功反馈，另外两种仍需分别游戏验收。只启用其中一个输入法模组；同时加载多个时衣柜不申请外部输入法焦点，设置页显示冲突提示。
+中文字体和输入法环境按 FLICK 的配置使用。插件会在框架仍使用缺省字体时，按旧 `font_path` 或 Windows 微软雅黑初始化中文字体，并将图标字体提供到框架标准搜索目录；FLICK 中显式选择的字体和其他样式配置保留。更新后需重新启动游戏。迁移代码保留 UTF-8 文本、长备注和多行输入；是否能在当前游戏、输入法及窗口模式下正确显示候选窗和提交中文，需按 [FLICK 验收清单](docs/FlickMigration.md#游戏内验收) 实测。界面设置提供单行、多行测试框。旧版的 [独立 IME 文档](docs/PortableIme.md) 仅供历史实现参考。
 
-SimpleIME 的候选窗位置请设为 **Follow Cursor** 或 **None**，其 GFx 光标定位无法直接跟随独立 ImGui 插入点。Input Method Unlocked 的运行限制依其安装版本而定，窗口 / 无边框模式及 IMM 兼容输入法是作者公布的支持范围。已加载已知外部输入法模组时，原生 IMM 不接管窗口；纯 TSF text store 尚未实现。原生模式的各输入法及全屏候选窗行为仍需游戏内验收，Ctrl+V 保持可用。
-
-界面设置显示识别到的输入法。搜索、别名、备注等标准文本框共用接入；焦点退出、关闭衣柜、切出游戏或读档会清理本模组申请和待处理文字。实现与来源见 [输入法接入说明](docs/InputMethodIntegration.md)，游戏验收见 [RuntimeChecks](docs/RuntimeChecks.md)。
-
-信息搜集、初版失败分析、最终关键代码及完整输入流程见 [ImGui 中文输入兼容完整报告](docs/reports/imgui-chinese-input-retrospective.md)。
+接入边界、公开 SDK 来源、鼠标灵敏度限制及验证情况见 [FLICK 迁移说明](docs/FlickMigration.md)。
 
 ## JSON 与字体配置
 
@@ -74,7 +70,6 @@ Data/SKSE/Plugins/
 └─ SkyWardrobe/
    ├─ Wardrobe.json
    ├─ Wardrobe.json.bak
-   ├─ ImGui.ini
    ├─ AliasPacks/*.json
    ├─ Fonts/fa-solid-900.ttf
    └─ Examples/
@@ -88,16 +83,13 @@ Data/SKSE/Plugins/
 
 `Wardrobe.json` 先写 `.tmp`，写入关闭成功后备份现有文件，最后使用 Windows 原子替换。错误 JSON 不会替换内存中的原数据，也不会被后续保存覆盖；界面会提示错误，可修正文件后“重新加载”。无效别名包独立跳过并显示文件名和错误。丢失模组的元数据与预设保留。
 
-字体默认使用 Windows 微软雅黑；备注加载独立的小字号字体。可配置其他支持中文的字体路径，修改后重启游戏：
+字体、中文字符覆盖、主题及全局缩放由 FLICK 配置。旧 `font_path` 用于首次补齐 FLICK 缺省中文字体；其他旧 `font_size`、`small_font_size`、`ime_backend`、`ime_disabled`、`cursor_sensitivity` 不再控制新界面，保存设置时原样保留。SkyWardrobe 的配置继续包含：
 
 ```ini
 hotkey_enabled=0
 toggle_key=122
 ui_scale=1.5
-cursor_sensitivity=1.0
-font_path=C:/Windows/Fonts/msyh.ttc
-font_size=20
-small_font_size=16
+player_outfit_storage=global
 ```
 
 ## 安全模式与异常退出恢复
@@ -126,7 +118,7 @@ small_font_size=16
 
 ## 构建与验证
 
-保留此目录已有的 CommonLibSSE-NG、vcpkg、CLion CMake 与 Visual Studio 2022 工具链。若从空目录准备，CommonLibSSE-NG `ng` 分支放入 `extern/CommonLibSSE-NG`，vcpkg 放入 `extern/vcpkg`；第三方依赖由现有 manifest 管理。nlohmann/json 3.12.0 的官方单头文件与 MIT 许可证随源码保存。
+保留此目录已有的 CommonLibSSE-NG、vcpkg、CLion CMake 与 Visual Studio 2022 工具链。若从空目录准备，CommonLibSSE-NG `ng` 分支放入 `extern/CommonLibSSE-NG`，vcpkg 放入 `extern/vcpkg`；第三方依赖由现有 manifest 管理。nlohmann/json 3.12.0 的官方单头文件与 MIT 许可证随源码保存。FLICK SDK 与其构建锁定的 ImGui 头文件也随源码保存；插件只调用框架 ABI，不静态链接第二份 ImGui。离线模型和旧布局测试仍使用原有 vcpkg ImGui。
 
 按项目要求，在提权 PowerShell 中从项目根目录运行：
 

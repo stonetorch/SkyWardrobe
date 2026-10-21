@@ -1,3 +1,4 @@
+#include "ui/FlickUi.h"
 #pragma once
 #include <imgui.h>
 #include <algorithm>
@@ -8,14 +9,14 @@ namespace CAF::Ui
     inline void SetNextWindowNearPoint(ImVec2 anchor, ImVec2 preferredSize,
         ImGuiCond condition = ImGuiCond_Appearing)
     {
-        const auto* viewport = ImGui::GetMainViewport();
+        const auto* viewport = FlickUi::GetMainViewport();
         const ImVec2 size(std::clamp(preferredSize.x, 1.0f, std::max(1.0f, viewport->WorkSize.x)),
             std::clamp(preferredSize.y, 1.0f, std::max(1.0f, viewport->WorkSize.y)));
         const ImVec2 position(std::clamp(anchor.x + 16.0f, viewport->WorkPos.x,
             viewport->WorkPos.x + std::max(0.0f, viewport->WorkSize.x - size.x)),
             std::clamp(anchor.y + 16.0f, viewport->WorkPos.y,
             viewport->WorkPos.y + std::max(0.0f, viewport->WorkSize.y - size.y)));
-        ImGui::SetNextWindowSize(size, condition);
-        ImGui::SetNextWindowPos(position, condition);
+        FlickUi::SetNextWindowSize(size, condition);
+        FlickUi::SetNextWindowPos(position, condition);
     }
 }

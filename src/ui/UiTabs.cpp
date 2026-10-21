@@ -1,3 +1,4 @@
+#include "ui/FlickUi.h"
 #include "ui/UiTabs.h"
 
 #include <algorithm>
@@ -40,29 +41,29 @@ namespace CAF::Ui
         if (stripWidth <= 0.0f)
         {
             // 以字号为单位取宽度，UI 缩放时标签列同步变化。
-            stripWidth = 8.0f * ImGui::GetFontSize();
+            stripWidth = 8.0f * FlickUi::GetFontSize();
         }
 
-        ImGui::PushID(id);
-        ImGui::BeginChild("##tab strip", ImVec2(stripWidth, 0.0f), ImGuiChildFlags_Borders);
-        const auto itemWidth = ImGui::GetContentRegionAvail().x;
+        FlickUi::PushID(id);
+        FlickUi::BeginChild("##tab strip", ImVec2(stripWidth, 0.0f), ImGuiChildFlags_Borders);
+        const auto itemWidth = FlickUi::GetContentRegionAvail().x;
         for (int i = 0; i < static_cast<int>(pages.size()); ++i)
         {
             // 显式给出宽度，让整列空白处都能点击切换。
-            if (ImGui::Selectable(Label(pages[i].icon, pages[i].label).c_str(), state.active == i, ImGuiSelectableFlags_None, ImVec2(itemWidth, 0.0f)))
+            if (FlickUi::Selectable(Label(pages[i].icon, pages[i].label).c_str(), state.active == i, ImGuiSelectableFlags_None, ImVec2(itemWidth, 0.0f)))
             {
                 state.active = i;
             }
         }
-        ImGui::EndChild();
+        FlickUi::EndChild();
 
-        ImGui::SameLine();
+        FlickUi::SameLine();
         // 每个页面用独立的 child ID，滚动位置按页各自保留。
-        ImGui::PushID(state.active);
-        ImGui::BeginChild("##tab page", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+        FlickUi::PushID(state.active);
+        FlickUi::BeginChild("##tab page", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
         pages[state.active].draw();
-        ImGui::EndChild();
-        ImGui::PopID();  // state.active
-        ImGui::PopID();  // id
+        FlickUi::EndChild();
+        FlickUi::PopID();  // state.active
+        FlickUi::PopID();  // id
     }
 }

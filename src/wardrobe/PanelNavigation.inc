@@ -69,9 +69,9 @@ bool NavigationHeader(const std::string& key, const std::string& label, bool for
 {
     auto& service = Service::Get();
     auto& collapsed = service.store.database["navigation"]["collapsed"];
-    ImGui::SetNextItemOpen(forceOpen || !collapsed.value(key, false), ImGuiCond_Always);
-    const bool expanded = ImGui::CollapsingHeader((label + "##" + key).c_str());
-    if (sidebarSearch.empty() && ImGui::IsItemClicked() && service.store.writable)
+    FlickUi::SetNextItemOpen(forceOpen || !collapsed.value(key, false), ImGuiCond_Always);
+    const bool expanded = FlickUi::CollapsingHeader((label + "##" + key).c_str());
+    if (sidebarSearch.empty() && FlickUi::IsItemClicked() && service.store.writable)
     { collapsed[key] = !expanded; service.Save(); }
     return expanded;
 }
@@ -80,14 +80,14 @@ void NavigationDrag(const std::string& key, const std::string& directory, bool h
 {
     auto& service = Service::Get();
     if (!service.store.writable) return;
-    if (!key.starts_with("section:") && !key.empty() && ImGui::BeginDragDropSource())
+    if (!key.starts_with("section:") && !key.empty() && FlickUi::BeginDragDropSource())
     {
-        ImGui::SetDragDropPayload("SW_NAV", key.c_str(), key.size() + 1);
-        ImGui::TextUnformatted(NavigationName(key).c_str()); ImGui::EndDragDropSource();
+        FlickUi::SetDragDropPayload("SW_NAV", key.c_str(), key.size() + 1);
+        FlickUi::TextUnformatted(NavigationName(key).c_str()); FlickUi::EndDragDropSource();
     }
-    if (ImGui::BeginDragDropTarget())
+    if (FlickUi::BeginDragDropTarget())
     {
-        if (const auto* payload = ImGui::AcceptDragDropPayload("SW_NAV", ImGuiDragDropFlags_AcceptBeforeDelivery))
+        if (const auto* payload = FlickUi::AcceptDragDropPayload("SW_NAV", ImGuiDragDropFlags_AcceptBeforeDelivery))
         {
             const std::string source(static_cast<const char*>(payload->Data));
             const bool sourceDirectory = source.starts_with("directory:");
@@ -95,9 +95,9 @@ void NavigationDrag(const std::string& key, const std::string& directory, bool h
             const bool compatible = directory == "@registered" ? source.starts_with("pluginCategories:") : sourceDirectory ? key.starts_with("directory:") : sourceCategory ? key.starts_with("categories:") : !key.starts_with("categories:");
             if (compatible && source != key)
             {
-                const bool after = ImGui::GetMousePos().y > (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) / 2;
-                const float y = after ? ImGui::GetItemRectMax().y : ImGui::GetItemRectMin().y;
-                ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetItemRectMin().x, y), ImVec2(ImGui::GetItemRectMax().x, y), ImGui::GetColorU32(ImGuiCol_DragDropTarget), 2);
+                const bool after = FlickUi::GetMousePos().y > (FlickUi::GetItemRectMin().y + FlickUi::GetItemRectMax().y) / 2;
+                const float y = after ? FlickUi::GetItemRectMax().y : FlickUi::GetItemRectMin().y;
+                FlickUi::GetWindowDrawList()->AddLine(ImVec2(FlickUi::GetItemRectMin().x, y), ImVec2(FlickUi::GetItemRectMax().x, y), FlickUi::GetColorU32(ImGuiCol_DragDropTarget), 2);
                 if (payload->IsDelivery())
                 {
                     const auto kind = sourceDirectory ? "directory" : sourceCategory ? "category" : "group";
@@ -106,33 +106,33 @@ void NavigationDrag(const std::string& key, const std::string& directory, bool h
                     const auto position = header && !sourceDirectory ? ids.size() : it == ids.end() ? ids.size() : static_cast<std::size_t>(it - ids.begin()) + (after ? 1 : 0);
                     MoveNavigation(source, directory, position);
                 }
-                else if (header && !sourceDirectory && !directory.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
+                else if (header && !sourceDirectory && !directory.empty() && FlickUi::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
                 {
                     static std::string hovered; static double since{};
-                    if (hovered != key) { hovered = key; since = ImGui::GetTime(); }
-                    if (ImGui::GetTime() - since > 0.65) service.store.database["navigation"]["collapsed"][key] = false;
+                    if (hovered != key) { hovered = key; since = FlickUi::GetTime(); }
+                    if (FlickUi::GetTime() - since > 0.65) service.store.database["navigation"]["collapsed"][key] = false;
                 }
             }
         }
-        ImGui::EndDragDropTarget();
+        FlickUi::EndDragDropTarget();
     }
 }
 
 void NavigationMenu(const std::string& key)
 {
-    if (!ImGui::BeginPopupContextItem()) return;
+    if (!FlickUi::BeginPopupContextItem()) return;
     auto& service = Service::Get();
-    ImGui::BeginDisabled(!service.store.writable);
-    if (ImGui::MenuItem(Tr("Move to...", "移动到…")))
+    FlickUi::BeginDisabled(!service.store.writable);
+    if (FlickUi::MenuItem(Tr("Move to...", "移动到…")))
     {
         movingEntry = key; moveDirectory = service.store.database["navigation"]["placements"].value(key, "");
         moveReference.clear(); moveSearch.clear(); moveMode = 1; openMove = true;
     }
     if (key.starts_with("directory:"))
     {
-        if (ImGui::MenuItem(Tr("Rename directory", "重命名目录")))
+        if (FlickUi::MenuItem(Tr("Rename directory", "重命名目录")))
         { editingDirectory = key.substr(10); directoryName = NavigationName(key); openDirectoryEditor = true; }
-        if (ImGui::MenuItem(Tr("Delete directory (keep groups)", "删除目录（保留服装组）")))
+        if (FlickUi::MenuItem(Tr("Delete directory (keep groups)", "删除目录（保留服装组）")))
         {
             const auto id = key.substr(10);
             for (auto& placement : service.store.database["navigation"]["placements"]) if (placement == id) placement = "";
@@ -141,66 +141,66 @@ void NavigationMenu(const std::string& key)
     }
     else
     {
-        if (ImGui::MenuItem(Tr("Edit group", "编辑服装组"))) StartGroupEdit(key);
-        if (key.starts_with("pluginCategories:") && ImGui::MenuItem(Tr("Return to registered plugins", "移回已注册模组"))) MoveNavigation(key, "@registered", 0);
+        if (FlickUi::MenuItem(Tr("Edit group", "编辑服装组"))) StartGroupEdit(key);
+        if (key.starts_with("pluginCategories:") && FlickUi::MenuItem(Tr("Return to registered plugins", "移回已注册模组"))) MoveNavigation(key, "@registered", 0);
     }
-    ImGui::EndDisabled(); ImGui::EndPopup();
+    FlickUi::EndDisabled(); FlickUi::EndPopup();
 }
 
 void DrawNavigationDialogs()
 {
     auto& service = Service::Get();
-    if (openMove) { ImGui::OpenPopup(Tr("Move navigation entry", "移动导航条目")); openMove = false; }
-    if (ImGui::BeginPopupModal(Tr("Move navigation entry", "移动导航条目"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    if (openMove) { FlickUi::OpenPopup(Tr("Move navigation entry", "移动导航条目")); openMove = false; }
+    if (FlickUi::BeginPopupModal(Tr("Move navigation entry", "移动导航条目"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
-        ImGui::TextUnformatted(NavigationName(movingEntry).c_str());
+        FlickUi::TextUnformatted(NavigationName(movingEntry).c_str());
         const auto kind = movingEntry.starts_with("directory:") ? "directory" : movingEntry.starts_with("categories:") ? "category" : "group";
-        if (std::string_view(kind) == "group" && ImGui::BeginCombo(Tr("Directory", "目录"), moveDirectory.empty() ? Tr("Unsorted", "未整理") : moveDirectory.c_str()))
+        if (std::string_view(kind) == "group" && FlickUi::BeginCombo(Tr("Directory", "目录"), moveDirectory.empty() ? Tr("Unsorted", "未整理") : moveDirectory.c_str()))
         {
-            if (ImGui::Selectable(Tr("Unsorted", "未整理"), moveDirectory.empty())) moveDirectory.clear();
+            if (FlickUi::Selectable(Tr("Unsorted", "未整理"), moveDirectory.empty())) moveDirectory.clear();
             for (const auto& key : NavigationIDs("directory"))
-                if (ImGui::Selectable(NavigationName(key).c_str(), moveDirectory == key.substr(10))) moveDirectory = key.substr(10);
-            if (movingEntry.starts_with("pluginCategories:") && ImGui::Selectable(Tr("Registered plugins", "已注册模组"))) moveDirectory = "@registered";
-            ImGui::EndCombo();
+                if (FlickUi::Selectable(NavigationName(key).c_str(), moveDirectory == key.substr(10))) moveDirectory = key.substr(10);
+            if (movingEntry.starts_with("pluginCategories:") && FlickUi::Selectable(Tr("Registered plugins", "已注册模组"))) moveDirectory = "@registered";
+            FlickUi::EndCombo();
         }
         const char* modes[] = {Tr("Beginning", "开头"), Tr("End", "末尾"), Tr("Position", "第 N 位"), Tr("Before entry", "指定条目之前"), Tr("After entry", "指定条目之后")};
-        ImGui::Combo(Tr("Position", "位置"), &moveMode, modes, 5);
-        if (moveMode == 2) ImGui::InputInt(Tr("Number", "序号"), &movePosition);
+        FlickUi::Combo(Tr("Position", "位置"), &moveMode, modes, 5);
+        if (moveMode == 2) FlickUi::InputInt(Tr("Number", "序号"), &movePosition);
         auto ids = NavigationIDs(kind, moveDirectory); std::erase(ids, movingEntry);
         if (moveMode >= 3)
         {
-            ImGui::InputTextWithHint("##move search", Tr("Search entries / pinyin", "搜索条目 / 拼音"), &moveSearch);
-            ImGui::BeginChild("Move candidates", ImVec2(400, 220), ImGuiChildFlags_Borders);
+            FlickUi::InputTextWithHint("##move search", Tr("Search entries / pinyin", "搜索条目 / 拼音"), &moveSearch);
+            FlickUi::BeginChild("Move candidates", ImVec2(400, 220), ImGuiChildFlags_Borders);
             for (const auto& id : ids) if (SearchScore(moveSearch, NavigationName(id)) > 0)
-                if (ImGui::Selectable((NavigationName(id) + "##" + id).c_str(), moveReference == id)) moveReference = id;
-            ImGui::EndChild();
+                if (FlickUi::Selectable((NavigationName(id) + "##" + id).c_str(), moveReference == id)) moveReference = id;
+            FlickUi::EndChild();
         }
-        ImGui::BeginDisabled(moveMode >= 3 && std::find(ids.begin(), ids.end(), moveReference) == ids.end());
-        if (ImGui::Button(Tr("Move", "移动")))
+        FlickUi::BeginDisabled(moveMode >= 3 && std::find(ids.begin(), ids.end(), moveReference) == ids.end());
+        if (FlickUi::Button(Tr("Move", "移动")))
         {
             const auto it = std::find(ids.begin(), ids.end(), moveReference);
             const auto position = moveMode == 0 ? 0u : moveMode == 1 ? ids.size() : moveMode == 2 ? static_cast<std::size_t>(std::max(1, movePosition) - 1) :
                 static_cast<std::size_t>(it - ids.begin()) + (moveMode == 4 ? 1 : 0);
-            MoveNavigation(movingEntry, moveDirectory, position); ImGui::CloseCurrentPopup();
+            MoveNavigation(movingEntry, moveDirectory, position); FlickUi::CloseCurrentPopup();
         }
-        ImGui::EndDisabled(); ImGui::SameLine();
-        if (ImGui::Button(Tr("Cancel", "取消"))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        FlickUi::EndDisabled(); FlickUi::SameLine();
+        if (FlickUi::Button(Tr("Cancel", "取消"))) FlickUi::CloseCurrentPopup();
+        FlickUi::EndPopup();
     }
-    if (openDirectoryEditor) { ImGui::OpenPopup(Tr("Directory name", "目录名称")); openDirectoryEditor = false; }
-    if (ImGui::BeginPopupModal(Tr("Directory name", "目录名称"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    if (openDirectoryEditor) { FlickUi::OpenPopup(Tr("Directory name", "目录名称")); openDirectoryEditor = false; }
+    if (FlickUi::BeginPopupModal(Tr("Directory name", "目录名称"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         EditText(Tr("Name", "名称"), directoryName);
-        ImGui::BeginDisabled(directoryName.empty() || !service.store.writable);
-        if (ImGui::Button(Tr("Save", "保存")))
+        FlickUi::BeginDisabled(directoryName.empty() || !service.store.writable);
+        if (FlickUi::Button(Tr("Save", "保存")))
         {
             if (editingDirectory.empty())
                 for (int i = 1;; ++i) { editingDirectory = "dir-" + std::to_string(i); if (!service.store.database["directories"].contains(editingDirectory)) break; }
             service.store.database["directories"][editingDirectory] = {{"name", directoryName}};
-            service.Save(); ImGui::CloseCurrentPopup();
+            service.Save(); FlickUi::CloseCurrentPopup();
         }
-        ImGui::EndDisabled(); ImGui::SameLine();
-        if (ImGui::Button(Tr("Cancel", "取消"))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        FlickUi::EndDisabled(); FlickUi::SameLine();
+        if (FlickUi::Button(Tr("Cancel", "取消"))) FlickUi::CloseCurrentPopup();
+        FlickUi::EndPopup();
     }
 }
